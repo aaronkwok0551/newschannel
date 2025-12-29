@@ -16,9 +16,9 @@ try:
 except:
     pass
 
-# --- 1. 頁面與樣式設定 ---
+# --- 1. 頁面與自定義樣式 (含閃爍特效) ---
 st.set_page_config(
-    page_title="HK News Hub",
+    page_title="Tommy Sir 後援會之新聞監察系統",
     page_icon="📰",
     layout="wide"
 )
@@ -28,18 +28,37 @@ st_autorefresh(interval=60 * 1000, limit=None, key="news_autoupdate")
 
 st.markdown("""
 <style>
+    /* 閃爍特效 */
+    @keyframes blinker {
+        50% { opacity: 0; }
+    }
+    .new-badge {
+        color: #ff4b4b;
+        font-weight: bold;
+        animation: blinker 1s linear infinite;
+        margin-right: 5px;
+    }
+    .read-text {
+        color: #a0a0a0 !important;
+    }
     .stCheckbox { margin-bottom: 0px; }
     .news-source-header { 
-        font-size: 1.1em; 
+        font-size: 1.2em; 
         font-weight: bold; 
-        color: #2c3e50; 
+        color: #1e293b; 
         margin-top: 15px; 
         margin-bottom: 10px;
         padding-bottom: 5px;
-        border-bottom: 2px solid #eee;
+        border-bottom: 2px solid #ddd;
     }
     a { text-decoration: none; color: #2980b9; }
     div[data-testid="column"] { display: flex; align-items: start; }
+    .generated-box {
+        background-color: #f0f2f6;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #dcdfe6;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -54,19 +73,16 @@ HEADERS = {
 # --- 2. 核心功能函式 ---
 
 def fetch_full_article(url):
-    """ 進入網頁抓取完整的正文內容 """
+    """ 抓取完整的正文內容 """
     try:
         r = requests.get(url, headers=HEADERS, timeout=5)
         r.encoding = 'utf-8'
         soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # 抓取多個 <p> 標籤並組合
         paragraphs = soup.find_all('p')
         if not paragraphs:
-            return "無法抓取全文，請點擊連結查看。"
-            
+            return "無法抓取全文，請點擊連結查看原文。"
         full_text = "\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 10])
-        return full_text if len(full_text) > 20 else "內容過短或抓取受限。"
+        return full_text if len(full_text) > 20 else "內容抓取受限，請點擊連結。"
     except Exception as e:
         return f"全文抓取失敗: {str(e)}"
 
@@ -79,181 +95,144 @@ def resolve_google_url(url):
     except:
         return url
 
-@st.cache_data(ttl=60)
-def fetch_via_google_news(site_domain, site_name, color, query_suffix=""):
-    query = f"site:{site_domain} {query_suffix}".strip()
-    encoded_query = urllib.parse.quote(query)
-    rss_url = f"https://news.google.com/rss/search?q={encoded_query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
-    
+def is_new_news(published_time_str):
+    """ 判斷是否為 15 分鐘內的新聞 """
     try:
-        feed = feedparser.parse(rss_url)
-        news_list = []
-        for entry in feed.entries[:8]:
-            title = entry.title.rsplit(" - ", 1)[0] if " - " in entry.title else entry.title
-            dt_str = ""
-            if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                try:
-                    dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
-                    dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
-                except:
-                    dt_str = "最新"
-
-            news_list.append({
-                'source': site_name,
-                'title': title,
-                'link': entry.link,
-                'time': dt_str,
-                'color': color
-            })
-        return news_list
+        pub_time = datetime.datetime.strptime(published_time_str, '%Y-%m-%d %H:%M')
+        pub_time = HK_TZ.localize(pub_time)
+        now = datetime.datetime.now(HK_TZ)
+        diff = (now - pub_time).total_seconds() / 60
+        return diff <= 15
     except:
-        return []
+        return False
 
 @st.cache_data(ttl=60)
-def fetch_hk01_api():
+def fetch_news_data(func, *args):
+    return func(*args)
+
+# 抓取邏輯 (封裝原本的 fetch 函數)
+def fetch_google_rss(site_domain, site_name, color):
+    query = urllib.parse.quote(f"site:{site_domain}")
+    rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
+    feed = feedparser.parse(rss_url)
+    news = []
+    for entry in feed.entries[:8]:
+        title = entry.title.rsplit(" - ", 1)[0] if " - " in entry.title else entry.title
+        dt_str = ""
+        if hasattr(entry, 'published_parsed'):
+            dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
+            dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
+        news.append({'source': site_name, 'title': title, 'link': entry.link, 'time': dt_str, 'color': color})
+    return news
+
+def fetch_hk01():
     try:
-        url = "https://web-data.api.hk01.com/v2/feed/category/0"
-        r = requests.get(url, headers=HEADERS, timeout=5)
+        r = requests.get("https://web-data.api.hk01.com/v2/feed/category/0", headers=HEADERS, timeout=5)
         items = r.json().get('items', [])[:8]
-        news_list = []
+        news = []
         for item in items:
             raw = item.get('data', {})
-            ts = raw.get('publishTime')
-            dt_str = datetime.datetime.fromtimestamp(ts, HK_TZ).strftime('%Y-%m-%d %H:%M') if ts else ""
-            news_list.append({
-                'source': "HK01",
-                'title': raw.get('title'),
-                'link': raw.get('publishUrl'),
-                'time': dt_str,
-                'color': "#184587"
-            })
-        return news_list
-    except:
-        return fetch_via_google_news("hk01.com", "HK01", "#184587")
+            dt_str = datetime.datetime.fromtimestamp(raw.get('publishTime'), HK_TZ).strftime('%Y-%m-%d %H:%M')
+            news.append({'source': "HK01", 'title': raw.get('title'), 'link': raw.get('publishUrl'), 'time': dt_str, 'color': "#184587"})
+        return news
+    except: return []
 
-@st.cache_data(ttl=60)
-def fetch_direct_rss(url, name, color):
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=5)
-        feed = feedparser.parse(r.content)
-        news_list = []
-        for entry in feed.entries[:8]:
-            dt_str = ""
-            if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                try:
-                    dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
-                    dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
-                except:
-                    dt_str = "最新"
-            link = entry.link
-            if 'news.now.com' in url and 'news.now.com' not in link:
-                link = f"https://news.now.com{link}"
-            news_list.append({
-                'source': name,
-                'title': entry.title,
-                'link': link,
-                'time': dt_str,
-                'color': color
-            })
-        return news_list
-    except:
-        return []
-
-# --- 3. 主程式邏輯 ---
-
-st.title("Tommy Sir 後援會之新聞監察系統")
-current_time = datetime.datetime.now(HK_TZ).strftime('%H:%M:%S')
-st.caption(f"最後更新: {current_time}")
+# --- 3. 初始化狀態 ---
 
 if 'selected_links' not in st.session_state:
     st.session_state.selected_links = set()
-if 'generated_output' not in st.session_state:
-    st.session_state.generated_output = ""
+if 'generated_text' not in st.session_state:
+    st.session_state.generated_text = ""
 
-sources = [
-    {"func": fetch_hk01_api, "args": [], "name": "HK01", "color": "#184587"},
-    {"func": fetch_via_google_news, "args": ["news.tvb.com/tc/local", "無線新聞", "#27ae60"], "name": "無線新聞", "color": "#27ae60"},
-    {"func": fetch_via_google_news, "args": ["news.now.com/home/local", "Now新聞", "#E65100"], "name": "Now 新聞", "color": "#E65100"},
-    {"func": fetch_direct_rss, "args": ["https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "香港電台", "#FF9800"], "name": "香港電台", "color": "#FF9800"},
-    {"func": fetch_direct_rss, "args": ["https://www.i-cable.com/feed/", "有線新聞", "#c0392b"], "name": "有線新聞", "color": "#c0392b"},
-    {"func": fetch_via_google_news, "args": ["881903.com", "商台", "#F1C40F"], "name": "商台 881903", "color": "#F1C40F"},
-]
+# --- 4. UI 介面 ---
 
-# 頂部控制
-t_col1, t_col2 = st.columns([1, 5])
-with t_col1:
-    if st.button("🔄 立即刷新"):
-        st.cache_data.clear()
-        st.session_state.generated_output = ""
-        st.rerun()
+st.title("Tommy Sir 後援會之新聞監察系統")
+st.caption(f"目前時間: {datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}")
 
-# 顯示並排新聞
-cols = st.columns(3)
-all_news_items = []
-
-for i, source_conf in enumerate(sources):
-    col = cols[i % 3]
-    with col:
-        if source_conf["func"] == fetch_hk01_api:
-            items = source_conf["func"]()
-        else:
-            items = source_conf["func"](*source_conf["args"])
-        
-        st.markdown(f"<div class='news-source-header' style='border-left: 5px solid {source_conf['color']}; padding-left: 10px;'>{source_conf['name']}</div>", unsafe_allow_html=True)
-        
-        if not items:
-            st.info("暫無資料")
-        else:
-            for item in items:
-                all_news_items.append(item)
-                unique_key = item['link']
-                sub_col1, sub_col2 = st.columns([0.15, 0.85])
-                with sub_col1:
-                    is_checked = unique_key in st.session_state.selected_links
-                    def on_change(key=unique_key):
-                        if key in st.session_state.selected_links:
-                            st.session_state.selected_links.remove(key)
-                        else:
-                            st.session_state.selected_links.add(key)
-                        st.session_state.generated_output = ""
-                    st.checkbox("", key=f"chk_{unique_key}", value=is_checked, on_change=on_change)
-                with sub_col2:
-                    st.markdown(f"**[{item['title']}]({item['link']})**<br><span style='font-size:0.8em; color:#888;'>{item['time']}</span>", unsafe_allow_html=True)
-
-# 側邊欄控制與預覽
-with st.sidebar:
-    st.header("🗃️ 生成區域")
-    count = len(st.session_state.selected_links)
-    st.write(f"目前已選擇： **{count}** 篇")
-    
-    if count > 0:
-        if st.button("📄 顯示生成內容"):
-            with st.spinner("正在抓取全文並解析連結..."):
-                output_text = ""
-                selected_data = [item for item in all_news_items if item['link'] in st.session_state.selected_links]
-                
-                for item in selected_data:
-                    real_link = resolve_google_url(item['link'])
-                    # 抓取全文
-                    full_content = fetch_full_article(real_link)
-                    
-                    output_text += f"{item['source']}：{item['title']}\n"
-                    output_text += f"[{item['time']}]\n\n"
-                    output_text += f"{full_content}\n\n"
-                    output_text += f"{real_link}\n\n"
-                    output_text += "Ends\n\n"
-                
-                st.session_state.generated_output = output_text
-        
-        if st.button("🗑️ 清空選擇"):
-            st.session_state.selected_links.clear()
-            st.session_state.generated_output = ""
+# 生成內容顯示區域
+if st.session_state.generated_text:
+    with st.expander("📄 已生成的 TXT 內容預覽 (可直接複製)", expanded=True):
+        st.text_area("內容:", value=st.session_state.generated_text, height=300)
+        if st.button("關閉預覽"):
+            st.session_state.generated_text = ""
             st.rerun()
 
-# 顯示生成結果在主畫面上
-if st.session_state.generated_output:
+# 側邊欄控制
+with st.sidebar:
+    st.header("⚙️ 系統控制")
+    if st.button("🔄 立即刷新所有新聞"):
+        st.cache_data.clear()
+        st.rerun()
+    
     st.divider()
-    st.subheader("📝 生成內容預覽")
-    st.text_area("您可以直接複製下方內容：", value=st.session_state.generated_output, height=400)
-    st.download_button("📥 仍然下載為 TXT", data=st.session_state.generated_output, file_name=f"news_digest_{datetime.datetime.now(HK_TZ).strftime('%Y%m%d_%H%M')}.txt")
+    st.write(f"目前已選擇: **{len(st.session_state.selected_links)}** 篇")
+    
+    if st.button("📄 生成 TXT 內容", type="primary"):
+        if not st.session_state.selected_links:
+            st.warning("請先勾選新聞")
+        else:
+            with st.spinner("正在整理全文中..."):
+                final_txt = ""
+                # 這裡需要從快取中比對資料
+                # 簡單起見，我們在主迴圈中收集所有當前抓取的新聞
+                for item in st.session_state.all_current_news:
+                    if item['link'] in st.session_state.selected_links:
+                        real_url = resolve_google_url(item['link'])
+                        content = fetch_full_article(real_url)
+                        final_txt += f"{item['source']}：{item['title']}\n"
+                        final_txt += f"[{item['time']}]\n\n"
+                        final_txt += f"{content}\n\n"
+                        final_txt += f"{real_url}\n\n"
+                        final_txt += "Ends\n\n"
+                st.session_state.generated_text = final_txt
+    
+    if st.button("🗑️ 清空所有選擇"):
+        st.session_state.selected_links.clear()
+        st.session_state.generated_text = ""
+        st.rerun()
 
+# --- 5. 新聞抓取與顯示 ---
+
+sources = [
+    ("HK01", fetch_hk01, []),
+    ("無線新聞", fetch_google_rss, ["news.tvb.com/tc/local", "無線新聞", "#27ae60"]),
+    ("Now 新聞", fetch_google_rss, ["news.now.com/home/local", "Now 新聞", "#E65100"]),
+]
+
+cols = st.columns(3)
+st.session_state.all_current_news = [] # 用於生成時比對
+
+for i, (name, func, args) in enumerate(sources):
+    with cols[i % 3]:
+        news_items = fetch_news_data(func, *args)
+        st.session_state.all_current_news.extend(news_items)
+        
+        st.markdown(f"<div class='news-source-header'>{name}</div>", unsafe_allow_html=True)
+        
+        if not news_items:
+            st.write("暫無更新")
+        else:
+            for item in news_items:
+                link = item['link']
+                is_new = is_new_news(item['time'])
+                is_selected = link in st.session_state.selected_links
+                
+                # UI 排版
+                c1, c2 = st.columns([0.15, 0.85])
+                with c1:
+                    # 勾選框
+                    if st.checkbox("", key=f"chk_{link}", value=is_selected):
+                        st.session_state.selected_links.add(link)
+                    else:
+                        st.session_state.selected_links.discard(link)
+                
+                with c2:
+                    new_tag = '<span class="new-badge">NEW!</span>' if is_new else ''
+                    text_class = "read-text" if is_selected else ""
+                    st.markdown(f"""
+                        {new_tag}
+                        <a href="{link}" target="_blank" class="{text_class}">
+                            <b>{item['title']}</b>
+                        </a><br>
+                        <small style="color:gray;">{item['time']}</small>
+                    """, unsafe_allow_html=True)
