@@ -3,13 +3,16 @@ import datetime
 import re
 import sys
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import quote_plus
+from xml.etree import ElementTree as ET
 
 import feedparser
 import pytz
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
+from streamlit_autorefresh import st_autorefresh
 
 # -----------------------
 # Runtime / Encoding
@@ -19,7 +22,16 @@ try:
 except Exception:
     pass
 
-hk_tz = pytz.timezone("Asia/Hong_Kong")
+HK_TZ = pytz.timezone("Asia/Hong_Kong")
+
+
+def now_hk() -> datetime.datetime:
+    return datetime.datetime.now(HK_TZ)
+
+
+def is_today_hk(dt_obj: datetime.datetime) -> bool:
+    return dt_obj.astimezone(HK_TZ).date() == now_hk().date()
+
 
 # -----------------------
 # Streamlit Page Config
@@ -33,47 +45,68 @@ st.markdown(
     """
 <style>
 body { font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; }
-.section-wrap { padding: 16px; border-radius: 12px; margin-bottom: 18px; }
+.section-wrap { padding: 16px; border-radius: 12px; margin-bottom: 12px; }
 .section-gov { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }
 .section-core { background: #f8f9fa; }
-.section-others { background: #f6f7fb; }
 
 .source-header {
-  font-size: 1.05em; font-weight: 700;
+  font-size: 1.02em; font-weight: 800;
   margin: 0 0 10px 0; padding: 8px 12px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white; border-radius: 8px; display: inline-block;
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  color: white; border-radius: 10px; display: inline-block;
 }
 
 .news-item {
   padding: 10px 12px; margin: 6px 0;
-  background: white; border-left: 4px solid #3498db;
-  border-radius: 8px; transition: all 0.18s ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  background: white; border-left: 5px solid #3498db;
+  border-radius: 10px; transition: all 0.18s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 .news-item:hover {
   transform: translateX(3px);
   box-shadow: 0 3px 10px rgba(0,0,0,0.10);
-  border-left-color: #e74c3c;
+  border-left-color: #ef4444;
 }
 .news-title {
-  font-size: 1rem; font-weight: 550;
-  color: #1f2937; text-decoration: none;
+  font-size: 0.97rem; font-weight: 650;
+  color: #111827; text-decoration: none;
   line-height: 1.45; display: block; margin-bottom: 4px;
 }
-.news-title:hover { color: #e74c3c; }
-.news-meta { font-size: 0.85rem; color: #6b7280; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-
-.badge {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  background: #111827; color: #fff; font-size: 0.78rem; margin-left: 8px;
+.news-title:hover { color: #ef4444; }
+.news-meta {
+  font-size: 0.83rem; color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
-.badge-warn { background: #b45309; }
-hr { border: none; border-top: 1px solid #e5e7eb; margin: 14px 0; }
+.badge-new {
+  display:inline-block; margin-left:8px; padding:2px 8px;
+  border-radius:999px; background:#ef4444; color:white;
+  font-size:0.75rem; font-weight:800;
+}
+.badge-warn {
+  display:inline-block; margin-left:8px; padding:2px 8px;
+  border-radius:999px; background:#b45309; color:white;
+  font-size:0.75rem; font-weight:800;
+}
+.small-note { color:#92400e; font-size:0.88rem; margin:-4px 0 10px 0; }
+hr { border: none; border-top: 1px solid #e5e7eb; margin: 12px 0; }
 </style>
 """,
     unsafe_allow_html=True,
 )
+
+# -----------------------
+# Data model
+# -----------------------
+@dataclass
+class Article:
+    source: str
+    title: str
+    link: str
+    timestamp: datetime.datetime
+    time_str: str
+    color: str
+    is_new: bool = False
+
 
 # -----------------------
 # Helpers
@@ -89,19 +122,14 @@ def clean_html_text(raw: str) -> str:
 
 def safe_get(url: str, timeout: int = 12) -> requests.Response:
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; HKNewsAggregator/1.0; +streamlit)",
+        "User-Agent": "Mozilla/5.0 (compatible; HKNewsAggregator/3.0; +streamlit)",
         "Accept": "*/*",
+        "Accept-Language": "zh-HK,zh;q=0.9,en;q=0.7",
     }
-    return requests.get(url, headers=headers, timeout=timeout)
+    return requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
-def parse_entry_time(entry) -> Tuple[datetime.datetime, str]:
-    """
-    Return (dt_obj in HK tz, HH:MM string).
-    Prefer published_parsed, then updated_parsed; fallback to now.
-    """
-    now_hk = datetime.datetime.now(hk_tz)
-
+def parse_entry_time_from_feed(entry) -> Tuple[datetime.datetime, str]:
     struct_time = None
     if hasattr(entry, "published_parsed") and entry.published_parsed:
         struct_time = entry.published_parsed
@@ -110,80 +138,115 @@ def parse_entry_time(entry) -> Tuple[datetime.datetime, str]:
 
     if struct_time:
         dt_utc = datetime.datetime(*struct_time[:6], tzinfo=pytz.utc)
-        dt_hk = dt_utc.astimezone(hk_tz)
+        dt_hk = dt_utc.astimezone(HK_TZ)
         return dt_hk, dt_hk.strftime("%H:%M")
 
-    return now_hk, "--:--"
+    dt = now_hk()
+    return dt, "--:--"
 
 
-@dataclass
-class Article:
-    source: str
-    title: str
-    link: str
-    timestamp: datetime.datetime
-    time_str: str
-    color: str
+def extract_meta_published_time(html: str) -> Optional[datetime.datetime]:
+    soup = BeautifulSoup(html, "html.parser")
+
+    candidates: List[str] = []
+    for prop in ["article:published_time", "og:updated_time", "article:modified_time"]:
+        tag = soup.find("meta", attrs={"property": prop})
+        if tag and tag.get("content"):
+            candidates.append(tag["content"])
+
+    for name in ["pubdate", "publishdate", "date", "parsely-pub-date"]:
+        tag = soup.find("meta", attrs={"name": name})
+        if tag and tag.get("content"):
+            candidates.append(tag["content"])
+
+    t = soup.find("time")
+    if t and t.get("datetime"):
+        candidates.append(t["datetime"])
+
+    for s in candidates:
+        s2 = s.strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.datetime.fromisoformat(s2)
+            if dt.tzinfo is None:
+                dt = HK_TZ.localize(dt)
+            return dt.astimezone(HK_TZ)
+        except Exception:
+            continue
+
+    return None
 
 
-def render_articles(articles: List[Article]) -> str:
+def mark_new_and_remember(source_key: str, items: List[Article]) -> List[Article]:
+    if "seen_links" not in st.session_state:
+        st.session_state["seen_links"] = {}  # type: ignore
+
+    seen: Dict[str, set] = st.session_state["seen_links"]  # type: ignore
+    if source_key not in seen:
+        seen[source_key] = set()
+
+    for it in items:
+        it.is_new = it.link not in seen[source_key]
+
+    for it in items:
+        seen[source_key].add(it.link)
+
+    return items
+
+
+def render_articles(articles: List[Article], warn_non_official: bool = False) -> str:
     if not articles:
-        return "<p style='color:#9ca3af; padding:14px; text-align:center;'>暫無新聞</p>"
+        return "<p style='color:#9ca3af; padding:14px; text-align:center;'>今日暫無新聞</p>"
 
     html = ""
     for a in articles:
+        new_badge = ' <span class="badge-new">NEW</span>' if a.is_new else ""
+        warn_badge = ' <span class="badge-warn">非官方聚合</span>' if warn_non_official else ""
         html += f"""
         <div class="news-item" style="border-left-color:{a.color};">
             <a class="news-title" href="{a.link}" target="_blank" rel="noopener noreferrer">{a.title}</a>
-            <div class="news-meta">🕐 {a.time_str} · {a.source}</div>
+            <div class="news-meta">🕐 {a.time_str} · {a.source}{new_badge}{warn_badge}</div>
         </div>
         """
     return html
 
 
 # -----------------------
-# Fetchers
+# Fetchers (today only, limit N)
 # -----------------------
-def fetch_rss(source_name: str, url: str, color: str, max_items: int = 20) -> List[Article]:
-    articles: List[Article] = []
+def fetch_rss_today(source_key: str, source_name: str, url: str, color: str, limit: int = 10) -> List[Article]:
+    out: List[Article] = []
     try:
         feed = feedparser.parse(url)
         entries = getattr(feed, "entries", None) or []
-        for entry in entries[:max_items]:
+        for entry in entries:
             title = clean_html_text(getattr(entry, "title", ""))
             link = getattr(entry, "link", "")
             if not title or not link:
                 continue
-            dt_obj, time_str = parse_entry_time(entry)
-            articles.append(
-                Article(
-                    source=source_name,
-                    title=title,
-                    link=link,
-                    timestamp=dt_obj,
-                    time_str=time_str,
-                    color=color,
-                )
-            )
+
+            dt_obj, time_str = parse_entry_time_from_feed(entry)
+            if not is_today_hk(dt_obj):
+                continue
+
+            out.append(Article(source=source_name, title=title, link=link, timestamp=dt_obj, time_str=time_str, color=color))
+            if len(out) >= limit:
+                break
     except Exception as e:
         st.warning(f"[RSS] {source_name} 讀取失敗：{e}")
 
-    articles.sort(key=lambda x: x.timestamp, reverse=True)
-    return articles
+    out.sort(key=lambda x: x.timestamp, reverse=True)
+    return mark_new_and_remember(source_key, out[:limit])
 
 
-def fetch_hk01_json(source_name: str, url: str, color: str, max_items: int = 20) -> List[Article]:
-    """
-    HK01 提供 JSON feed（非 RSS）。結構可能變動，採多路徑保守解析。
-    """
-    articles: List[Article] = []
-    now_hk = datetime.datetime.now(hk_tz)
-
+def fetch_hk01_today(source_key: str, source_name: str, url: str, color: str, limit: int = 10) -> List[Article]:
+    out: List[Article] = []
     try:
         resp = safe_get(url)
         resp.raise_for_status()
-        data = resp.json()
+        if "application/json" not in resp.headers.get("Content-Type", ""):
+            return []
 
+        data = resp.json()
         candidates = None
         if isinstance(data, dict):
             if isinstance(data.get("items"), list):
@@ -194,215 +257,349 @@ def fetch_hk01_json(source_name: str, url: str, color: str, max_items: int = 20)
                 candidates = data["data"]
 
         if not candidates:
-            return articles
+            return []
 
-        for item in candidates[:max_items]:
+        for item in candidates:
             if not isinstance(item, dict):
                 continue
+
             title = clean_html_text(item.get("title") or item.get("headline") or "")
             link = item.get("url") or item.get("link") or ""
             if link and link.startswith("/"):
                 link = "https://www.hk01.com" + link
 
-            # time
-            dt_obj = now_hk
-            time_str = "--:--"
             ts = item.get("published_at") or item.get("created_at") or item.get("publishTime") or item.get("timestamp")
+            if not isinstance(ts, str):
+                continue
 
-            if isinstance(ts, str):
-                try:
-                    dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    if dt.tzinfo is None:
-                        dt = hk_tz.localize(dt)
-                    dt_obj = dt.astimezone(hk_tz)
-                    time_str = dt_obj.strftime("%H:%M")
-                except Exception:
-                    pass
+            dt_obj = None
+            try:
+                dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = HK_TZ.localize(dt)
+                dt_obj = dt.astimezone(HK_TZ)
+            except Exception:
+                dt_obj = None
+
+            if not dt_obj or not is_today_hk(dt_obj):
+                continue
 
             if title and link:
-                articles.append(
-                    Article(
-                        source=source_name,
-                        title=title,
-                        link=link,
-                        timestamp=dt_obj,
-                        time_str=time_str,
-                        color=color,
-                    )
-                )
+                out.append(Article(source=source_name, title=title, link=link, timestamp=dt_obj, time_str=dt_obj.strftime("%H:%M"), color=color))
+            if len(out) >= limit:
+                break
 
     except Exception as e:
         st.warning(f"[HK01] 讀取失敗：{e}")
 
-    articles.sort(key=lambda x: x.timestamp, reverse=True)
-    return articles
+    out.sort(key=lambda x: x.timestamp, reverse=True)
+    return mark_new_and_remember(source_key, out[:limit])
 
 
-def fetch_google_news_query(source_name: str, query_rss_url: str, color: str, max_items: int = 20) -> List[Article]:
-    """
-    Google News RSS（非官方聚合）—作為商業電台等 JS 動態站的穩定替代方案。
-    """
-    return fetch_rss(source_name, query_rss_url, color, max_items=max_items)
+def fetch_google_news_today(source_key: str, source_name: str, query: str, color: str, limit: int = 10) -> List[Article]:
+    url = (
+        "https://news.google.com/rss/search?q="
+        + quote_plus(query)
+        + "&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
+    )
+    items = fetch_rss_today(source_key, source_name, url, color, limit=limit)
+    return items
 
 
-# ---- Optional: real crawler hook (Playwright) ----
-def fetch_881903_playwright_stub(*args, **kwargs) -> List[Article]:
-    """
-    真爬蟲（Playwright）接口保留。
-    Railway 上要跑這個通常需要：
-    - 安裝 playwright + browsers
-    - 額外系統依賴
-    你決定要啟用時，我再把完整版本給你。
-    """
-    return []
+def fetch_tvb_today_rss_then_sitemap(
+    source_key: str,
+    source_name: str,
+    rss_url: str,
+    sitemap_url: str,
+    color: str,
+    limit: int = 10,
+) -> Tuple[List[Article], bool]:
+    # returns (items, used_non_official?) -> sitemap is still "official-ish", but treat as crawler fallback (not Google)
+    items = fetch_rss_today(source_key + "_rss", source_name, rss_url, color, limit=limit)
+    if items:
+        return items, False
+
+    # sitemap fallback crawler
+    out: List[Article] = []
+    try:
+        resp = safe_get(sitemap_url, timeout=15)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+        ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+
+        locs: List[str] = []
+        for url_node in root.findall("sm:url", ns):
+            loc = url_node.findtext("sm:loc", default="", namespaces=ns)
+            if loc:
+                # try to prioritize TC local
+                if "/tc/local/" in loc:
+                    locs.append(loc)
+
+        # fallback: if none matched, take first batch
+        if not locs:
+            for url_node in root.findall("sm:url", ns):
+                loc = url_node.findtext("sm:loc", default="", namespaces=ns)
+                if loc:
+                    locs.append(loc)
+
+        locs = locs[:80]
+
+        for link in locs:
+            try:
+                page = safe_get(link, timeout=12)
+                if page.status_code != 200:
+                    continue
+                dt = extract_meta_published_time(page.text)
+                if not dt or not is_today_hk(dt):
+                    continue
+
+                soup = BeautifulSoup(page.text, "html.parser")
+                title = ""
+                ogt = soup.find("meta", attrs={"property": "og:title"})
+                if ogt and ogt.get("content"):
+                    title = ogt["content"].strip()
+                if not title and soup.title and soup.title.string:
+                    title = soup.title.string.strip()
+                title = clean_html_text(title)
+                if not title:
+                    continue
+
+                out.append(Article(source=source_name, title=title, link=link, timestamp=dt, time_str=dt.strftime("%H:%M"), color=color))
+                if len(out) >= limit:
+                    break
+            except Exception:
+                continue
+    except Exception as e:
+        st.warning(f"[TVB sitemap] 讀取失敗：{e}")
+
+    out.sort(key=lambda x: x.timestamp, reverse=True)
+    out = mark_new_and_remember(source_key + "_sitemap", out[:limit])
+    return out, False
+
+
+def fetch_now_today_html(source_key: str, source_name: str, home_url: str, color: str, limit: int = 10) -> List[Article]:
+    out: List[Article] = []
+    try:
+        resp = safe_get(home_url, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        links: List[str] = []
+        for a in soup.select("a[href]"):
+            href = a.get("href", "")
+            if not href:
+                continue
+            if href.startswith("/"):
+                href = "https://news.now.com" + href
+            # Now news content often under /home/ or /home/local etc.
+            if href.startswith("https://news.now.com/") and "/home/" in href:
+                links.append(href)
+
+        seen = set()
+        dedup: List[str] = []
+        for x in links:
+            if x not in seen:
+                seen.add(x)
+                dedup.append(x)
+
+        dedup = dedup[:120]
+
+        for link in dedup:
+            try:
+                page = safe_get(link, timeout=12)
+                if page.status_code != 200:
+                    continue
+                dt = extract_meta_published_time(page.text)
+                if not dt or not is_today_hk(dt):
+                    continue
+
+                psoup = BeautifulSoup(page.text, "html.parser")
+                title = ""
+                ogt = psoup.find("meta", attrs={"property": "og:title"})
+                if ogt and ogt.get("content"):
+                    title = ogt["content"].strip()
+                if not title and psoup.title and psoup.title.string:
+                    title = psoup.title.string.strip()
+                title = clean_html_text(title)
+                if not title:
+                    continue
+
+                out.append(Article(source=source_name, title=title, link=link, timestamp=dt, time_str=dt.strftime("%H:%M"), color=color))
+                if len(out) >= limit:
+                    break
+            except Exception:
+                continue
+    except Exception as e:
+        st.warning(f"[Now HTML] 讀取失敗：{e}")
+
+    out.sort(key=lambda x: x.timestamp, reverse=True)
+    return mark_new_and_remember(source_key, out[:limit])
 
 
 # -----------------------
-# Source Configuration
+# Cache wrapper (60s)
 # -----------------------
-# 政府（官方 RSS）
-GOV_FEEDS = [
-    ("政府新聞 (中)", "https://www.info.gov.hk/gia/rss/general_zh.xml", "#E74C3C"),
-    ("Gov News (En)", "https://www.info.gov.hk/gia/rss/general_en.xml", "#C0392B"),
-]
-
-# 核心你指定的第二、第三順位
-RTHK_FEED = ("香港電台 RTHK（本地）", "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "#FF9800")
-
-# 商業電台：預設用 Google News RSS 聚合（非官方）
-COMMERCIAL_RADIO_FALLBACK = (
-    "商業電台 881/903（非官方聚合）",
-    "https://news.google.com/rss/search?q=881903%20OR%20%E5%95%86%E6%A5%AD%E9%9B%BB%E5%8F%B0%20OR%20%E5%8F%B1%E5%90%92903&hl=zh-HK&gl=HK&ceid=HK:zh-Hant",
-    "#F59E0B",
-)
-
-# 其他媒體（多數有站方 RSS/Feed；若來源日後失效，你可直接改 URL）
-OTHER_SOURCES: List[Tuple[str, str, str, str]] = [
-    # (name, url, color, type)
-    ("TVB 新聞（本地）", "https://news.tvb.com/rss/local.xml", "#10B981", "rss"),
-    ("Now 新聞（本地）", "https://news.now.com/rss/local", "#3B82F6", "rss"),
-    ("有線新聞 i-Cable", "https://www.i-cable.com/feed/", "#EF4444", "rss"),
-    ("HK01", "https://web-data.api.hk01.com/v2/feed/category/0", "#1F4E79", "hk01"),
-    # 你也可以加更多 Google News 搜尋聚合（非官方）
-    ("明報（非官方聚合）", "https://news.google.com/rss/search?q=%E6%98%8E%E5%A0%B1&hl=zh-HK&gl=HK&ceid=HK:zh-Hant", "#6B7280", "google"),
-    ("星島（非官方聚合）", "https://news.google.com/rss/search?q=%E6%98%9F%E5%B3%B6&hl=zh-HK&gl=HK&ceid=HK:zh-Hant", "#6B7280", "google"),
-]
-
-ICON_MAP: Dict[str, str] = {
-    "政府": "🏛️",
-    "RTHK": "📻",
-    "商業電台": "📻",
-    "TVB": "📺",
-    "Now": "📺",
-    "有線": "📺",
-    "HK01": "📱",
-}
-
-# -----------------------
-# Cached Fetch Wrapper
-# -----------------------
-Fetcher = Callable[[str, str, str, int], List[Article]]
-
 @st.cache_data(ttl=60, show_spinner=False)
-def get_articles_cached(fetcher_key: str, source_name: str, url: str, color: str, max_items: int) -> List[Article]:
-    if fetcher_key == "rss":
-        return fetch_rss(source_name, url, color, max_items=max_items)
-    if fetcher_key == "hk01":
-        return fetch_hk01_json(source_name, url, color, max_items=max_items)
-    if fetcher_key == "google":
-        return fetch_google_news_query(source_name, url, color, max_items=max_items)
-    if fetcher_key == "881903_pw":
-        return fetch_881903_playwright_stub(source_name, url, color, max_items=max_items)
+def cached(kind: str, args: Tuple):
+    if kind == "rss_today":
+        return fetch_rss_today(*args)
+    if kind == "hk01_today":
+        return fetch_hk01_today(*args)
+    if kind == "google_today":
+        return fetch_google_news_today(*args)
+    if kind == "tvb_combo":
+        return fetch_tvb_today_rss_then_sitemap(*args)
+    if kind == "now_html":
+        return fetch_now_today_html(*args)
     return []
 
 
 # -----------------------
-# UI
+# UI Header + Auto refresh
 # -----------------------
 st.title("🗞️ Tommy Sir後援會之新聞中心")
-st.caption(f"最後更新（香港時間）: {datetime.datetime.now(hk_tz).strftime('%Y-%m-%d %H:%M:%S')}")
+st.caption(f"只顯示今日新聞（香港時間）｜最後更新：{now_hk().strftime('%Y-%m-%d %H:%M:%S')}")
 
-col_a, col_b = st.columns([1, 1])
-with col_a:
-    max_items_per_source = st.slider("每個來源最多顯示條數", min_value=5, max_value=40, value=18, step=1)
-with col_b:
-    if st.button("🔄 立即刷新", type="primary"):
-        st.cache_data.clear()
-        st.rerun()
+top_a, top_b, top_c = st.columns([1, 1, 2])
+with top_a:
+    limit_each = st.selectbox("每個媒體顯示", [10], index=0)
+with top_b:
+    auto_on = st.toggle("⏱️ 每分鐘自動更新", value=True)
+with top_c:
+    st.markdown("<div class='small-note'>NEW：代表本次運行首次見到的連結（會在同一個 session 內記住已出現過的連結）。</div>", unsafe_allow_html=True)
+
+if auto_on:
+    st_autorefresh(interval=60 * 1000, key="auto_refresh_60s")
+
+if st.button("🔄 立即刷新", type="primary"):
+    st.cache_data.clear()
+    st.rerun()
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 
-# ========== 1) 政府新聞（中英合併，按時間排序） ==========
+# -----------------------
+# Government (ZH/EN separate, today only, 10 each)
+# -----------------------
 st.markdown('<div class="section-wrap section-gov">', unsafe_allow_html=True)
-st.markdown("### 🏛️ 政府新聞與公告（中英合併，按時間排序）")
+st.markdown("### 🏛️ 政府新聞與公告（中 / 英分開｜各 10 條｜只顯示今日）")
 
-with st.spinner("讀取政府 RSS 中..."):
-    merged: List[Article] = []
-    for (name, url, color) in GOV_FEEDS:
-        merged.extend(get_articles_cached("rss", name, url, color, max_items=max_items_per_source))
-    merged.sort(key=lambda x: x.timestamp, reverse=True)
-    st.markdown(render_articles(merged), unsafe_allow_html=True)
+gov_zh_col, gov_en_col = st.columns(2)
 
-st.markdown("</div>", unsafe_allow_html=True)
-st.markdown("<hr/>", unsafe_allow_html=True)
+with gov_zh_col:
+    st.markdown('<div class="source-header">🏛️ 政府新聞（中文）</div>', unsafe_allow_html=True)
+    gov_zh = cached("rss_today", ("gov_zh", "政府新聞（中文）", "https://www.info.gov.hk/gia/rss/general_zh.xml", "#E74C3C", limit_each))
+    st.markdown(render_articles(gov_zh, warn_non_official=False), unsafe_allow_html=True)
 
-# ========== 2) RTHK ==========
-st.markdown('<div class="section-wrap section-core">', unsafe_allow_html=True)
-st.markdown("### 📻 香港電台 RTHK（按時間排序）")
-
-with st.spinner("讀取 RTHK RSS 中..."):
-    name, url, color = RTHK_FEED
-    rthk_articles = get_articles_cached("rss", name, url, color, max_items=max_items_per_source)
-    st.markdown(render_articles(rthk_articles), unsafe_allow_html=True)
+with gov_en_col:
+    st.markdown('<div class="source-header">🏛️ Gov News (English)</div>', unsafe_allow_html=True)
+    gov_en = cached("rss_today", ("gov_en", "Gov News (English)", "https://www.info.gov.hk/gia/rss/general_en.xml", "#C0392B", limit_each))
+    st.markdown(render_articles(gov_en, warn_non_official=False), unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
 st.markdown("<hr/>", unsafe_allow_html=True)
 
-# ========== 3) 商業電台 ==========
+# -----------------------
+# Media list you specified (5 columns grid, today only, 10 each)
+# Strategy:
+# - Official RSS/JSON: use those
+# - Otherwise: Google News RSS with site:domain (non-official) and filter out entertainment
+# -----------------------
+NEG_ENT = "-娛樂 -演唱會 -音樂 -歌手 -電影 -明星 -綜藝 -劇集 -頒獎禮 -花邊 -八卦 -KOL -旅遊 -美食"
+BASE_NEWS_HINT = "(新聞 OR 港聞 OR 本地 OR 時事 OR 政府 OR 立法會 OR 警方 OR 法庭 OR 交通 OR 天氣 OR 經濟 OR 財經)"
+
+
+MEDIA_SOURCES = [
+    # key, display_name, kind, payload, color, warn_non_official
+    ("rthk", "RTHK（本地）", "rss_today", ("rthk", "RTHK（本地）", "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "#FF9800", limit_each), False),
+
+    # 商業電台：用 Google News + 排除娛樂
+    ("cr", "商業電台（新聞）", "google_today",
+     ("cr", "商業電台（新聞過濾）",
+      '(881903 OR "商業電台" OR "叱咤903") ' + BASE_NEWS_HINT + " " + NEG_ENT,
+      "#F59E0B", limit_each),
+     True),
+
+    # HK01：JSON
+    ("hk01", "HK01", "hk01_today",
+     ("hk01", "HK01（JSON）", "https://web-data.api.hk01.com/v2/feed/category/0", "#1F4E79", limit_each),
+     False),
+
+    # Now：HTML
+    ("now", "Now 新聞", "now_html",
+     ("now", "Now（HTML）", "https://news.now.com/home", "#3B82F6", limit_each),
+     False),
+
+    # TVB：RSS + sitemap fallback
+    ("tvb", "TVB 新聞", "tvb_combo",
+     ("tvb", "TVB", "https://news.tvb.com/rss/local.xml", "https://news.tvb.com/sitemap.xml", "#10B981", limit_each),
+     False),
+
+    # 其餘：先用 Google News site:domain（非官方聚合）
+    ("mingpao", "明報", "google_today",
+     ("mingpao", "明報（聚合）", 'site:mingpao.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("onc", "on.cc", "google_today",
+     ("onc", "on.cc（聚合）", 'site:on.cc ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("singtao", "星島", "google_today",
+     ("singtao", "星島（聚合）", 'site:stheadline.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("topick", "TOPick", "google_today",
+     ("topick", "TOPick（聚合）", 'site:topick.hket.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("hkej", "信報即時新聞", "google_today",
+     ("hkej", "信報即時（聚合）", 'site:hkej.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("cable", "Cable 即時新聞", "google_today",
+     ("cable", "Cable（聚合）", 'site:i-cable.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("hkcd", "香港商報", "google_today",
+     ("hkcd", "香港商報（聚合）", 'site:hkcd.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("wenweipo", "文匯報", "google_today",
+     ("wenweipo", "文匯報（聚合）", 'site:wenweipo.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("dotdotnews", "點新聞", "google_today",
+     ("dotdotnews", "點新聞（聚合）", 'site:dotdotnews.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+
+    ("tkww", "大公文匯", "google_today",
+     ("tkww", "大公文匯（聚合）", 'site:tkww.hk ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
+     True),
+]
+
 st.markdown('<div class="section-wrap section-core">', unsafe_allow_html=True)
-st.markdown("### 📻 商業電台（按時間排序）")
+st.markdown("### 📰 今日新聞（你指定的媒體｜每個 10 條｜5 欄並排｜只顯示今日）")
 st.markdown(
-    "<div style='margin:-6px 0 10px 0; color:#92400e;'>"
-    "目前使用 <b>非官方聚合 RSS</b>（Google News）作穩定來源；如你要改成 <b>Playwright 真爬蟲</b>（抓 881903 網站），我可以再提供升級版。</div>",
+    "<div class='small-note'>註：未提供穩定官方 RSS/JSON 的媒體，暫以 Google News（site:domain）作「非官方聚合」替代；如你要逐個改成真爬蟲（requests/Playwright），我可再逐站升級。</div>",
     unsafe_allow_html=True,
 )
 
-with st.spinner("讀取商業電台來源中..."):
-    name, url, color = COMMERCIAL_RADIO_FALLBACK
-    cr_articles = get_articles_cached("google", name, url, color, max_items=max_items_per_source)
-    st.markdown(render_articles(cr_articles), unsafe_allow_html=True)
+cols = st.columns(5)
+for idx, (key, name, kind, payload, warn_non_official) in enumerate(MEDIA_SOURCES):
+    with cols[idx % 5]:
+        st.markdown(f'<div class="source-header">📰 {name}</div>', unsafe_allow_html=True)
 
-st.markdown("</div>", unsafe_allow_html=True)
-st.markdown("<hr/>", unsafe_allow_html=True)
-
-# ========== 4) 其他媒體 ==========
-st.markdown('<div class="section-wrap section-others">', unsafe_allow_html=True)
-st.markdown("### 📰 其他新聞平台（各自按時間排序）")
-
-# 用 3 欄網格展示
-grid_cols = st.columns(3)
-for idx, (name, url, color, typ) in enumerate(OTHER_SOURCES):
-    with grid_cols[idx % 3]:
-        icon = "📰"
-        for k, v in ICON_MAP.items():
-            if k in name:
-                icon = v
-                break
-
-        badge = ""
-        if typ == "google":
-            badge = '<span class="badge badge-warn">非官方聚合</span>'
-        elif typ == "rss":
-            badge = '<span class="badge">RSS</span>'
-        elif typ == "hk01":
-            badge = '<span class="badge">JSON</span>'
-
-        st.markdown(f'<div class="source-header">{icon} {name}{badge}</div>', unsafe_allow_html=True)
         with st.spinner("讀取中..."):
-            arts = get_articles_cached(typ, name, url, color, max_items=max_items_per_source)
-            st.markdown(render_articles(arts), unsafe_allow_html=True)
+            if kind == "tvb_combo":
+                # returns (items, flag)
+                tvb_items, _flag = cached("tvb_combo", payload)
+                st.markdown(render_articles(tvb_items, warn_non_official=False), unsafe_allow_html=True)
+            else:
+                items = cached(kind, payload)
+                st.markdown(render_articles(items, warn_non_official=warn_non_official), unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# Footer
-st.caption("提示：若個別來源長期顯示「暫無新聞」，多半是來源 URL 失效或站方改版；你只需更新該來源的 URL 即可。")
+st.caption(
+    "提示：如某媒體長期顯示「今日暫無新聞」，多數原因是該站改版/反爬/動態渲染或 Google News 未即時收錄。"
+    "你可指定「要真爬蟲」的媒體，我會逐個改成 requests 或 Playwright 版本。"
+)
