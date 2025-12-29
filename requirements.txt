@@ -3,6 +3,5 @@ requests
 feedparser
 beautifulsoup4
 pytz
-
 lxml
 streamlit-autorefresh
