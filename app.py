@@ -161,7 +161,7 @@ def fetch_direct_rss(url, name, color):
 
 # --- 3. 主程式邏輯 ---
 
-st.title("🇭🇰 香港即時新聞中心")
+st.title("Tommy Sir 後援會之新聞監察系統")
 current_time = datetime.datetime.now(HK_TZ).strftime('%H:%M:%S')
 st.caption(f"最後更新: {current_time}")
 
@@ -256,3 +256,4 @@ if st.session_state.generated_output:
     st.subheader("📝 生成內容預覽")
     st.text_area("您可以直接複製下方內容：", value=st.session_state.generated_output, height=400)
     st.download_button("📥 仍然下載為 TXT", data=st.session_state.generated_output, file_name=f"news_digest_{datetime.datetime.now(HK_TZ).strftime('%Y%m%d_%H%M')}.txt")
+
