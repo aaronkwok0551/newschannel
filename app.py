@@ -271,15 +271,15 @@ def fetch_rss_today(source_name: str, url: str, color: str, limit: int = 10) -> 
 # Sources
 # -----------------------
 # Put your RSSHub base in Streamlit secrets:
-#   RSSHUB_BASE = "https://YOUR-RSSHUB.up.railway.app"
-RSSHUB_BASE = ""
+#   RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
+RRSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
 try:
     RSSHUB_BASE = (st.secrets.get("RSSHUB_BASE", "") or "").rstrip("/")
 except Exception:
-    RSSHUB_BASE = ""
+    RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
 
 # You can hardcode instead:
-# RSSHUB_BASE = "https://YOUR-RSSHUB.up.railway.app"
+# RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
 
 OFFICIAL = [
     ("政府新聞（中）", "https://www.info.gov.hk/gia/rss/general_zh.xml", "#E74C3C", "官方RSS"),
@@ -426,3 +426,4 @@ st.caption(
     "提示：如某來源長期顯示「今日暫無新聞」，通常是該 RSS 沒有提供可解析的發佈時間，"
     "或該來源今天未更新。若你想把規則改為「最近 24 小時」會更寬鬆。"
 )
+
