@@ -1,5 +1,6 @@
 streamlit
 feedparser
 pytz
-streamlit-autorefresh
 beautifulsoup4
+python-dateutil
+streamlit-autorefresh
