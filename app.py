@@ -40,6 +40,7 @@ st.markdown("""
     }
     .read-text {
         color: #a0a0a0 !important;
+        text-decoration: none;
     }
     .stCheckbox { margin-bottom: 0px; }
     .news-source-header { 
@@ -54,10 +55,11 @@ st.markdown("""
     a { text-decoration: none; color: #2980b9; }
     div[data-testid="column"] { display: flex; align-items: start; }
     .generated-box {
-        background-color: #f0f2f6;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #dcdfe6;
+        background-color: #f8fafc;
+        padding: 20px;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        margin-bottom: 20px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -78,6 +80,7 @@ def fetch_full_article(url):
         r = requests.get(url, headers=HEADERS, timeout=5)
         r.encoding = 'utf-8'
         soup = BeautifulSoup(r.text, 'html.parser')
+        # 嘗試抓取常見的新聞內容標籤
         paragraphs = soup.find_all('p')
         if not paragraphs:
             return "無法抓取全文，請點擊連結查看原文。"
@@ -102,15 +105,19 @@ def is_new_news(published_time_str):
         pub_time = HK_TZ.localize(pub_time)
         now = datetime.datetime.now(HK_TZ)
         diff = (now - pub_time).total_seconds() / 60
-        return diff <= 15
+        return 0 <= diff <= 15
     except:
         return False
 
 @st.cache_data(ttl=60)
-def fetch_news_data(func, *args):
-    return func(*args)
+def fetch_news_data(func_name, *args):
+    """ 集中處理抓取數據並快取 """
+    if func_name == "fetch_hk01":
+        return fetch_hk01()
+    elif func_name == "fetch_google_rss":
+        return fetch_google_rss(*args)
+    return []
 
-# 抓取邏輯 (封裝原本的 fetch 函數)
 def fetch_google_rss(site_domain, site_name, color):
     query = urllib.parse.quote(f"site:{site_domain}")
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
@@ -137,31 +144,22 @@ def fetch_hk01():
         return news
     except: return []
 
-# --- 3. 初始化狀態 ---
+# --- 3. 初始化狀態 (避免 Crash 的關鍵) ---
 
 if 'selected_links' not in st.session_state:
     st.session_state.selected_links = set()
 if 'generated_text' not in st.session_state:
     st.session_state.generated_text = ""
+if 'all_current_news' not in st.session_state:
+    st.session_state.all_current_news = []
 
-# --- 4. UI 介面 ---
+# --- 4. 側邊欄控制 ---
 
-st.title("Tommy Sir 後援會之新聞監察系統")
-st.caption(f"目前時間: {datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}")
-
-# 生成內容顯示區域
-if st.session_state.generated_text:
-    with st.expander("📄 已生成的 TXT 內容預覽 (可直接複製)", expanded=True):
-        st.text_area("內容:", value=st.session_state.generated_text, height=300)
-        if st.button("關閉預覽"):
-            st.session_state.generated_text = ""
-            st.rerun()
-
-# 側邊欄控制
 with st.sidebar:
     st.header("⚙️ 系統控制")
     if st.button("🔄 立即刷新所有新聞"):
         st.cache_data.clear()
+        st.session_state.all_current_news = [] # 清空以重新載入
         st.rerun()
     
     st.divider()
@@ -171,10 +169,9 @@ with st.sidebar:
         if not st.session_state.selected_links:
             st.warning("請先勾選新聞")
         else:
-            with st.spinner("正在整理全文中..."):
+            with st.spinner("正在整理全文中，請稍候..."):
                 final_txt = ""
-                # 這裡需要從快取中比對資料
-                # 簡單起見，我們在主迴圈中收集所有當前抓取的新聞
+                # 使用存儲在 session_state 中的數據進行生成
                 for item in st.session_state.all_current_news:
                     if item['link'] in st.session_state.selected_links:
                         real_url = resolve_google_url(item['link'])
@@ -191,21 +188,34 @@ with st.sidebar:
         st.session_state.generated_text = ""
         st.rerun()
 
-# --- 5. 新聞抓取與顯示 ---
+# --- 5. UI 介面與內容顯示 ---
 
-sources = [
-    ("HK01", fetch_hk01, []),
-    ("無線新聞", fetch_google_rss, ["news.tvb.com/tc/local", "無線新聞", "#27ae60"]),
-    ("Now 新聞", fetch_google_rss, ["news.now.com/home/local", "Now 新聞", "#E65100"]),
+st.title("Tommy Sir 後援會之新聞監察系統")
+st.caption(f"目前時間: {datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}")
+
+# 生成內容顯示區域 (直接顯示在主網頁)
+if st.session_state.generated_text:
+    st.markdown("### 📄 生成內容預覽")
+    st.text_area("您可以直接複製下方內容：", value=st.session_state.generated_text, height=400)
+    if st.button("❌ 關閉預覽"):
+        st.session_state.generated_text = ""
+        st.rerun()
+    st.divider()
+
+# 新聞抓取來源配置
+sources_config = [
+    ("HK01", "fetch_hk01", []),
+    ("無線新聞", "fetch_google_rss", ["news.tvb.com/tc/local", "無線新聞", "#27ae60"]),
+    ("Now 新聞", "fetch_google_rss", ["news.now.com/home/local", "Now 新聞", "#E65100"]),
 ]
 
 cols = st.columns(3)
-st.session_state.all_current_news = [] # 用於生成時比對
+temp_all_news = [] # 暫存本次抓取的數據
 
-for i, (name, func, args) in enumerate(sources):
+for i, (name, func_name, args) in enumerate(sources_config):
     with cols[i % 3]:
-        news_items = fetch_news_data(func, *args)
-        st.session_state.all_current_news.extend(news_items)
+        news_items = fetch_news_data(func_name, *args)
+        temp_all_news.extend(news_items) # 收集所有新聞
         
         st.markdown(f"<div class='news-source-header'>{name}</div>", unsafe_allow_html=True)
         
@@ -228,11 +238,14 @@ for i, (name, func, args) in enumerate(sources):
                 
                 with c2:
                     new_tag = '<span class="new-badge">NEW!</span>' if is_new else ''
-                    text_class = "read-text" if is_selected else ""
+                    text_style = 'class="read-text"' if is_selected else ""
                     st.markdown(f"""
                         {new_tag}
-                        <a href="{link}" target="_blank" class="{text_class}">
+                        <a href="{link}" target="_blank" {text_style}>
                             <b>{item['title']}</b>
                         </a><br>
                         <small style="color:gray;">{item['time']}</small>
                     """, unsafe_allow_html=True)
+
+# 將本次抓取的數據存入 session_state，供 sidebar 生成按鈕使用
+st.session_state.all_current_news = temp_all_news
