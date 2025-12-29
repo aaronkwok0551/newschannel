@@ -373,3 +373,4 @@ for col_idx, column_sources in enumerate(sources_config):
                         """, unsafe_allow_html=True)
 
 st.session_state.all_current_news = temp_all_news
+
