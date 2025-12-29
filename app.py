@@ -1,376 +1,212 @@
-# -*- coding: utf-8 -*-
 import streamlit as st
-import requests
 import feedparser
 import datetime
 import pytz
-import urllib.parse
-import time
+import re
 from bs4 import BeautifulSoup
-import sys
-from streamlit_autorefresh import st_autorefresh
 
-# 設定預設編碼
-try:
-    sys.stdout.reconfigure(encoding='utf-8')
-except:
-    pass
+# --- 1. 頁面基本設定 ---
+st.set_page_config(page_title="香港新聞聚合", layout="wide", page_icon="📰")
 
-# --- 1. 頁面與自定義樣式 ---
-st.set_page_config(
-    page_title="Tommy Sir 後援會之新聞監察系統",
-    page_icon="📰",
-    layout="wide"
-)
-
-# 自動刷新 (每 60 秒)
-st_autorefresh(interval=60 * 1000, limit=None, key="news_autoupdate")
-
+# --- 2. CSS 樣式 (解決鋸齒問題的核心) ---
+# 使用 HTML Table 強制對齊：時間欄固定 85px，來源欄固定 110px
 st.markdown("""
 <style>
-    /* 閃爍特效 */
-    @keyframes blinker { 50% { opacity: 0; } }
-    .new-badge {
-        color: #ff4b4b;
-        font-weight: bold;
-        animation: blinker 1s linear infinite;
-        margin-right: 5px;
-        font-size: 0.8em;
-    }
-    .read-text {
-        color: #a0a0a0 !important;
-        text-decoration: none;
-        font-weight: normal !important;
-    }
-    .stCheckbox { margin-bottom: 0px; }
-    .news-source-header { 
-        font-size: 1.2em; 
-        font-weight: bold; 
-        color: #1e293b; 
-        margin-top: 5px; 
-        margin-bottom: 15px;
-        padding-bottom: 5px;
-        border-bottom: 2px solid #ddd;
-    }
-    a { text-decoration: none; color: #2980b9; transition: 0.3s; }
-    a:hover { color: #e74c3c; }
+    /* 全局字體優化 */
+    body { font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; }
     
-    /* 調整列的對齊 */
-    div[data-testid="column"] {
-        background-color: #ffffff;
-        padding: 10px;
-        border-radius: 5px;
+    /* 表格樣式 */
+    table { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+    
+    /* 表格行樣式 */
+    tr { border-bottom: 1px solid #eee; transition: background-color 0.2s; }
+    tr:hover { background-color: #f9f9f9; }
+    
+    /* 儲存格樣式 */
+    td { padding: 10px 12px; vertical-align: middle; }
+    
+    /* 強制對齊的關鍵：固定寬度 */
+    .col-time { 
+        width: 85px; 
+        min-width: 85px; 
+        color: #666; 
+        font-size: 0.9em; 
+        white-space: nowrap; 
+        font-family: monospace; /* 等寬字體讓數字對齊更整齊 */
     }
-    /* 修正 HTML 原始碼外洩問題，強制隱藏可能的 Raw Code */
-    code { display: none; }
+    .col-source { 
+        width: 110px; 
+        min-width: 110px; 
+        font-weight: bold; 
+        white-space: nowrap; 
+    }
+    .col-title { 
+        width: auto; 
+    }
+    
+    /* 來源標籤樣式 */
+    .badge { 
+        display: inline-block; 
+        padding: 4px 0; 
+        border-radius: 4px; 
+        color: white; 
+        font-size: 0.85rem; 
+        text-align: center;
+        width: 90px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+    
+    /* 連結樣式 */
+    a.news-link { 
+        text-decoration: none; 
+        color: #262730; 
+        font-size: 1.05rem; 
+        line-height: 1.4;
+        transition: 0.2s; 
+    }
+    a.news-link:hover { 
+        color: #ff4b4b; 
+        text-decoration: underline; 
+    }
+    
+    /* 標題裝飾 */
+    h3 { 
+        margin-top: 25px; 
+        border-left: 5px solid #ff4b4b; 
+        padding-left: 12px; 
+        font-weight: 600;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# 設定時區
-HK_TZ = pytz.timezone('Asia/Hong_Kong')
-UTC_TZ = pytz.timezone('UTC')
+# --- 3. 工具函數 ---
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-}
+# 設定香港時區
+hk_tz = pytz.timezone('Asia/Hong_Kong')
 
-# --- 2. 核心功能函式 ---
+def clean_html_title(raw_html):
+    """強力清除標題中的 HTML 標籤 (解決 <a href...> 顯示問題)"""
+    if not raw_html:
+        return ""
+    # 使用 BeautifulSoup 清除標籤
+    soup = BeautifulSoup(raw_html, "html.parser")
+    text = soup.get_text()
+    # 再次確保沒有遺留的 tags
+    cleanr = re.compile('<.*?>')
+    text = re.sub(cleanr, '', text)
+    # 移除多餘的空白
+    return " ".join(text.split())
 
-def get_real_url(url):
-    """
-    嘗試解析 Google News 的重定向網址，還原成原始網址。
-    主要用於生成 TXT 時，因為這需要網路請求，不建議在列表顯示時對每條都做。
-    """
-    if "news.google.com" not in url:
-        return url
-    try:
-        # allow_redirects=True 會自動跟隨跳轉直到最後的真實網址
-        r = requests.head(url, headers=HEADERS, allow_redirects=True, timeout=5)
-        return r.url
-    except:
-        # 如果 HEAD 請求失敗，嘗試 GET
+def parse_feeds(feed_list, filter_today=False):
+    """讀取並解析 RSS"""
+    articles = []
+    now_hk = datetime.datetime.now(hk_tz)
+
+    for source_name, url, color in feed_list:
         try:
-            r = requests.get(url, headers=HEADERS, timeout=5)
-            return r.url
-        except:
-            return url
+            feed = feedparser.parse(url)
+            # 如果 RSS 讀取失敗或格式錯誤
+            if not feed.entries:
+                continue
 
-def fetch_full_article(url):
-    """ 抓取內文，並在此處確保網址是真實網址 """
-    
-    # 1. 先把網址還原成真實網址 (針對 Google 連結)
-    real_url = get_real_url(url)
-    
-    try:
-        r = requests.get(real_url, headers=HEADERS, timeout=10)
-        r.encoding = 'utf-8'
-        soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # 移除干擾元素
-        for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'meta', 'svg', 'button']):
-            tag.decompose()
-
-        paragraphs = []
-
-        # --- 針對不同網站的特定解析邏輯 ---
-        
-        # 1. 無線新聞 (TVB)
-        if "news.tvb.com" in real_url:
-            content_div = soup.find('div', class_='content-node-details') or soup.find('div', class_='desc')
-            if content_div: paragraphs = content_div.find_all(['p', 'div'], recursive=False)
-
-        # 2. Now 新聞
-        elif "news.now.com" in real_url:
-            leading = soup.find('div', class_='newsLeading')
-            content = soup.find('div', class_='newsContent')
-            if leading: paragraphs.append(leading)
-            if content: paragraphs.append(content)
-
-        # 3. 商業電台 (881903)
-        elif "881903.com" in real_url:
-            content_div = soup.find('div', class_='news-content')
-            if content_div: paragraphs = content_div.find_all('p')
-
-        # 4. 香港 01
-        elif "hk01.com" in real_url:
-            content_div = soup.find('article')
-            if content_div: paragraphs = content_div.find_all('p')
-
-        # 5. 通用後備方案
-        if not paragraphs:
-            main_div = soup.find('div', class_=lambda x: x and ('article' in x.lower() or 'content' in x.lower()))
-            if main_div:
-                paragraphs = main_div.find_all('p')
-            else:
-                paragraphs = soup.find_all('p')
-
-        full_text_list = []
-        for p in paragraphs:
-            text = p.get_text().strip()
-            if len(text) > 5 and "請按此" not in text and "原文網址" not in text:
-                full_text_list.append(text)
-        
-        content_text = "\n\n".join(full_text_list)
-        if len(content_text) < 20: content_text = "（無法自動提取詳細內文，請點擊連結查看）"
-        
-        return content_text, real_url # 回傳內文和真實網址
-
-    except Exception as e:
-        return f"抓取失敗 ({str(e)})", real_url
-
-def is_new_news(published_time_str):
-    try:
-        pub_time = datetime.datetime.strptime(published_time_str, '%Y-%m-%d %H:%M')
-        pub_time = HK_TZ.localize(pub_time)
-        now = datetime.datetime.now(HK_TZ)
-        diff = (now - pub_time).total_seconds() / 60
-        return 0 <= diff <= 30
-    except:
-        return False
-
-@st.cache_data(ttl=60)
-def fetch_news_data(func_name, *args):
-    if func_name == "fetch_hk01":
-        return fetch_hk01()
-    elif func_name == "fetch_google_rss":
-        return fetch_google_rss(*args)
-    elif func_name == "fetch_direct_rss":
-        return fetch_direct_rss(*args)
-    return []
-
-def fetch_google_rss(site_domain, site_name, color):
-    """
-    注意：Google RSS 返回的是跳轉連結。
-    為了頁面加載速度，我們在列表頁暫時顯示 Google 連結，
-    但在生成 TXT 時會進行還原。
-    """
-    query = urllib.parse.quote(f"site:{site_domain}")
-    rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
-    feed = feedparser.parse(rss_url)
-    news = []
-    for entry in feed.entries[:8]:
-        title = entry.title.rsplit(" - ", 1)[0]
-        dt_str = ""
-        if hasattr(entry, 'published_parsed'):
-            dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
-            dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
-        news.append({'source': site_name, 'title': title, 'link': entry.link, 'time': dt_str, 'color': color})
-    return news
-
-def fetch_direct_rss(url, name, color):
-    """ 
-    直接抓取媒體的 RSS，這樣可以得到真實網址。
-    """
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=8)
-        feed = feedparser.parse(r.content)
-        news = []
-        for entry in feed.entries[:8]:
-            dt_str = ""
-            if hasattr(entry, 'published_parsed'):
-                dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
-                dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
-            elif hasattr(entry, 'updated_parsed'): # 部分 RSS 使用 updated
-                 dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.updated_parsed), UTC_TZ).astimezone(HK_TZ)
-                 dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
-            
-            link = entry.link
-            # Now 新聞特殊處理：如果連結是相對路徑或不完整
-            if 'news.now.com' in url and 'http' not in link:
-                 # Now RSS 有時會給出 weird 的 link，嘗試修復
-                 pass 
-            
-            news.append({'source': name, 'title': entry.title, 'link': link, 'time': dt_str, 'color': color})
-        return news
-    except Exception as e:
-        return []
-
-def fetch_hk01():
-    try:
-        r = requests.get("https://web-data.api.hk01.com/v2/feed/category/0", headers=HEADERS, timeout=5)
-        items = r.json().get('items', [])[:8]
-        news = []
-        for item in items:
-            raw = item.get('data', {})
-            dt_str = datetime.datetime.fromtimestamp(raw.get('publishTime'), HK_TZ).strftime('%Y-%m-%d %H:%M')
-            news.append({'source': "HK01", 'title': raw.get('title'), 'link': raw.get('publishUrl'), 'time': dt_str, 'color': "#184587"})
-        return news
-    except: return []
-
-# --- 3. 初始化狀態 ---
-
-if 'selected_links' not in st.session_state:
-    st.session_state.selected_links = set()
-if 'generated_text' not in st.session_state:
-    st.session_state.generated_text = ""
-if 'all_current_news' not in st.session_state:
-    st.session_state.all_current_news = []
-
-# --- 4. 側邊欄控制與顯示 ---
-
-with st.sidebar:
-    st.title("⚙️ 控制台")
-    
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("🔄 刷新新聞"):
-            st.cache_data.clear()
-            st.session_state.all_current_news = []
-            st.rerun()
-    with col_btn2:
-        if st.button("🗑️ 清空選擇"):
-            st.session_state.selected_links = set()
-            st.session_state.generated_text = ""
-            st.rerun()
-
-    st.divider()
-    st.write(f"已選新聞: **{len(st.session_state.selected_links)}** 篇")
-
-    if st.button("📄 生成 TXT 內容", type="primary", use_container_width=True):
-        if not st.session_state.selected_links:
-            st.warning("請先在右側勾選新聞！")
-        else:
-            with st.spinner("正在抓取內文並解析真實網址..."):
-                final_txt = ""
-                selected_items = [
-                    item for item in st.session_state.all_current_news 
-                    if item['link'] in st.session_state.selected_links
-                ]
+            for entry in feed.entries:
+                # 1. 處理時間
+                dt_obj = None
+                time_str = ""
                 
-                count = 1
-                total = len(selected_items)
-                progress_bar = st.progress(0)
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    dt_utc = datetime.datetime(*entry.published_parsed[:6], tzinfo=pytz.utc)
+                    dt_hk = dt_utc.astimezone(hk_tz)
+                    dt_obj = dt_hk
+                    time_str = dt_hk.strftime('%H:%M')
+                else:
+                    # 如果沒有時間，使用當前時間作為佔位符，但標記為未知
+                    dt_obj = now_hk
+                    time_str = "--:--"
 
-                for idx, item in enumerate(selected_items):
-                    # 在這裡同時獲取 內文 和 真實網址
-                    content, real_url = fetch_full_article(item['link'])
-                    
-                    final_txt += f"【新聞 {idx+1}】{item['source']}：{item['title']}\n"
-                    final_txt += f"發布時間：{item['time']}\n"
-                    final_txt += "-" * 20 + "\n"
-                    final_txt += f"{content}\n\n"
-                    # 使用還原後的 real_url
-                    final_txt += f"連結：{real_url}\n"
-                    final_txt += "Ends\n\n" + "="*30 + "\n\n"
-                    progress_bar.progress((idx + 1) / total)
+                # 2. 過濾邏輯 (如果是政府新聞稿，只留今天的)
+                if filter_today:
+                    if dt_obj.date() != now_hk.date():
+                        continue # 跳過非今天的新聞
 
-                st.session_state.generated_text = final_txt
-                progress_bar.empty()
+                # 3. 處理標題 (清洗 HTML)
+                title_clean = clean_html_title(entry.title)
+                
+                # 4. 存入列表
+                articles.append({
+                    'source': source_name,
+                    'title': title_clean,
+                    'link': entry.link,
+                    'time': time_str,
+                    'timestamp': dt_obj, # 用於排序
+                    'color': color
+                })
+        except Exception as e:
+            # 靜默失敗，避免影響其他來源
+            print(f"Error fetching {source_name}: {e}")
+            continue
 
-    if st.session_state.generated_text:
-        st.markdown("---")
-        st.success("✅ 生成完成！連結已還原為原始網址。")
-        st.text_area("TXT 內容預覽", value=st.session_state.generated_text, height=600)
+    # 按時間倒序排列 (最新的在最上面)
+    articles.sort(key=lambda x: x['timestamp'], reverse=True)
+    return articles
 
-# --- 5. 主介面：新聞顯示區 ---
+def render_news_table(articles):
+    """將新聞渲染為 HTML 表格"""
+    if not articles:
+        return "<p style='color:#666; padding:10px;'>暫無相關新聞 (或是今日尚無更新)</p>"
 
-st.title("Tommy Sir 後援會之新聞監察系統")
-st.caption(f"最後同步時間: {datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}")
+    html = "<table>"
+    for art in articles:
+        html += f"""
+        <tr>
+            <td class="col-time">{art['time']}</td>
+            <td class="col-source">
+                <span class="badge" style="background-color: {art['color']}">{art['source']}</span>
+            </td>
+            <td class="col-title">
+                <a class="news-link" href="{art['link']}" target="_blank">{art['title']}</a>
+            </td>
+        </tr>
+        """
+    html += "</table>"
+    return html
 
-# 重點修改：Now 新聞改用 fetch_direct_rss
-sources_config = [
-    # 第一欄
-    [
-        ("HK01", "fetch_hk01", []),
-        ("香港電台", "fetch_direct_rss", ["https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "香港電台", "#FF9800"]),
-    ],
-    # 第二欄
-    [
-        # TVB 沒有官方 RSS，只能用 Google，但在生成 TXT 時我們會還原網址
-        ("無線新聞 (TVB)", "fetch_google_rss", ["news.tvb.com/tc/local", "無線新聞", "#27ae60"]),
-        ("有線新聞", "fetch_direct_rss", ["https://www.i-cable.com/feed/", "有線新聞", "#c0392b"]),
-    ],
-    # 第三欄
-    [
-        # Now 新聞改用官方 RSS，這樣網址就是 news.now.com 了
-        ("Now 新聞", "fetch_direct_rss", ["https://news.now.com/home/local/rss.xml", "Now 新聞", "#E65100"]),
-        # 商台沒有官方 RSS，只能用 Google
-        ("商業電台", "fetch_google_rss", ["881903.com", "商台", "#F1C40F"]),
-    ]
+# --- 4. 定義新聞來源 ---
+
+# 政府新聞稿 (需要篩選今天)
+gov_feeds = [
+    ("政府新聞 (中)", "https://www.info.gov.hk/gia/rss/general_zh.xml", "#E74C3C"), # 紅色
+    ("Gov News (En)", "https://www.info.gov.hk/gia/rss/general_en.xml", "#C0392B")  # 深紅
 ]
 
-cols = st.columns(3)
-temp_all_news = []
+# 其他媒體
+other_feeds = [
+    # 使用 Google News 搜尋關鍵字產生 RSS，這通常比直接抓取官網更穩定且無亂碼
+    ("商台 903", "https://news.google.com/rss/search?q=%E5%8F%B1%E5%90%92903&hl=zh-HK&gl=HK&ceid=HK:zh-Hant", "#F1C40F"), 
+    ("TVB 新聞", "https://news.tvb.com/rss/local.xml", "#2ECC71"), 
+    ("Now 新聞", "https://news.now.com/rss/local", "#3498DB")      
+]
 
-for col_idx, column_sources in enumerate(sources_config):
-    with cols[col_idx]:
-        for name, func_name, args in column_sources:
-            st.markdown(f"<div class='news-source-header'>{name}</div>", unsafe_allow_html=True)
-            news_items = fetch_news_data(func_name, *args)
-            temp_all_news.extend(news_items)
-            
-            if not news_items:
-                st.info("暫無更新")
-            else:
-                for item in news_items:
-                    link = item['link']
-                    is_new = is_new_news(item['time'])
-                    is_selected = link in st.session_state.selected_links
-                    
-                    c1, c2 = st.columns([0.1, 0.9])
-                    with c1:
-                        if st.checkbox("", key=f"chk_{link}", value=is_selected):
-                            st.session_state.selected_links.add(link)
-                        else:
-                            st.session_state.selected_links.discard(link)
-                    
-                    with c2:
-                        new_tag = '<span class="new-badge">NEW!</span>' if is_new else ''
-                        text_style = 'class="read-text"' if is_selected else ""
-                        
-                        # 這裡使用 HTML 渲染，確保引號和結構正確
-                        # 即使列表頁 TVB 顯示的是 google 網址，生成 TXT 時會變成真實網址
-                        st.markdown(f"""
-                            <div style="line-height:1.4; margin-bottom:10px;">
-                                {new_tag}
-                                <a href="{link}" target="_blank" {text_style}>
-                                    {item['title']}
-                                </a>
-                                <br>
-                                <span style="font-size:0.8em; color:#888;">{item['time']}</span>
-                            </div>
-                        """, unsafe_allow_html=True)
+# --- 5. 主程式介面 ---
 
-st.session_state.all_current_news = temp_all_news
+st.title("🗞️ 香港新聞聚合中心")
+st.caption(f"最後更新: {datetime.datetime.now(hk_tz).strftime('%Y-%m-%d %H:%M:%S')}")
 
+if st.button("🔄 刷新新聞"):
+    st.rerun()
+
+# --- 區塊 1: 政府新聞稿 (今日) ---
+st.markdown("### 🏛️ 政府新聞稿 (僅限今日)")
+st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+
+with st.spinner('正在讀取政府新聞...'):
+    gov_articles = parse_feeds(gov_feeds, filter_today=True)
+    st.markdown(render_news_table(gov_articles), unsafe_allow_html=True)
+
+# --- 區塊 2: 其他媒體 ---
+st.markdown("### 📺 媒體報導 (TVB / Now / 903)")
+st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+
+with st.spinner('正在讀取媒體新聞...'):
+    other_articles = parse_feeds(other_feeds, filter_today=False) 
+    st.markdown(render_news_table(other_articles), unsafe_allow_html=True)
