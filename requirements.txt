@@ -1,5 +1,6 @@
-streamlit==1.29.0
-feedparser==6.0.10
-pytz==2023.3
-beautifulsoup4==4.12.2
-lxml==4.9.3
+streamlit==1.41.1
+feedparser==6.0.11
+pytz==2024.2
+beautifulsoup4==4.12.3
+requests==2.32.3
+streamlit-autorefresh==1.0.1
