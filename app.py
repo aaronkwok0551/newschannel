@@ -122,7 +122,7 @@ def clean_html_text(raw: str) -> str:
 
 def safe_get(url: str, timeout: int = 12) -> requests.Response:
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; HKNewsAggregator/3.0; +streamlit)",
+        "User-Agent": "Mozilla/5.0 (compatible; HKNewsAggregator/4.0; +streamlit)",
         "Accept": "*/*",
         "Accept-Language": "zh-HK,zh;q=0.9,en;q=0.7",
     }
@@ -174,6 +174,19 @@ def extract_meta_published_time(html: str) -> Optional[datetime.datetime]:
             continue
 
     return None
+
+
+def extract_title_best_effort(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    ogt = soup.find("meta", attrs={"property": "og:title"})
+    if ogt and ogt.get("content"):
+        return clean_html_text(ogt["content"].strip())
+    if soup.title and soup.title.string:
+        return clean_html_text(soup.title.string.strip())
+    h1 = soup.find("h1")
+    if h1:
+        return clean_html_text(h1.get_text(" ", strip=True))
+    return ""
 
 
 def mark_new_and_remember(source_key: str, items: List[Article]) -> List[Article]:
@@ -306,77 +319,6 @@ def fetch_google_news_today(source_key: str, source_name: str, query: str, color
     return items
 
 
-def fetch_tvb_today_rss_then_sitemap(
-    source_key: str,
-    source_name: str,
-    rss_url: str,
-    sitemap_url: str,
-    color: str,
-    limit: int = 10,
-) -> Tuple[List[Article], bool]:
-    # returns (items, used_non_official?) -> sitemap is still "official-ish", but treat as crawler fallback (not Google)
-    items = fetch_rss_today(source_key + "_rss", source_name, rss_url, color, limit=limit)
-    if items:
-        return items, False
-
-    # sitemap fallback crawler
-    out: List[Article] = []
-    try:
-        resp = safe_get(sitemap_url, timeout=15)
-        resp.raise_for_status()
-        root = ET.fromstring(resp.text)
-        ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-
-        locs: List[str] = []
-        for url_node in root.findall("sm:url", ns):
-            loc = url_node.findtext("sm:loc", default="", namespaces=ns)
-            if loc:
-                # try to prioritize TC local
-                if "/tc/local/" in loc:
-                    locs.append(loc)
-
-        # fallback: if none matched, take first batch
-        if not locs:
-            for url_node in root.findall("sm:url", ns):
-                loc = url_node.findtext("sm:loc", default="", namespaces=ns)
-                if loc:
-                    locs.append(loc)
-
-        locs = locs[:80]
-
-        for link in locs:
-            try:
-                page = safe_get(link, timeout=12)
-                if page.status_code != 200:
-                    continue
-                dt = extract_meta_published_time(page.text)
-                if not dt or not is_today_hk(dt):
-                    continue
-
-                soup = BeautifulSoup(page.text, "html.parser")
-                title = ""
-                ogt = soup.find("meta", attrs={"property": "og:title"})
-                if ogt and ogt.get("content"):
-                    title = ogt["content"].strip()
-                if not title and soup.title and soup.title.string:
-                    title = soup.title.string.strip()
-                title = clean_html_text(title)
-                if not title:
-                    continue
-
-                out.append(Article(source=source_name, title=title, link=link, timestamp=dt, time_str=dt.strftime("%H:%M"), color=color))
-                if len(out) >= limit:
-                    break
-            except Exception:
-                continue
-    except Exception as e:
-        st.warning(f"[TVB sitemap] 讀取失敗：{e}")
-
-    out.sort(key=lambda x: x.timestamp, reverse=True)
-    out = mark_new_and_remember(source_key + "_sitemap", out[:limit])
-    return out, False
-
-
 def fetch_now_today_html(source_key: str, source_name: str, home_url: str, color: str, limit: int = 10) -> List[Article]:
     out: List[Article] = []
     try:
@@ -391,7 +333,6 @@ def fetch_now_today_html(source_key: str, source_name: str, home_url: str, color
                 continue
             if href.startswith("/"):
                 href = "https://news.now.com" + href
-            # Now news content often under /home/ or /home/local etc.
             if href.startswith("https://news.now.com/") and "/home/" in href:
                 links.append(href)
 
@@ -402,7 +343,7 @@ def fetch_now_today_html(source_key: str, source_name: str, home_url: str, color
                 seen.add(x)
                 dedup.append(x)
 
-        dedup = dedup[:120]
+        dedup = dedup[:140]
 
         for link in dedup:
             try:
@@ -413,14 +354,7 @@ def fetch_now_today_html(source_key: str, source_name: str, home_url: str, color
                 if not dt or not is_today_hk(dt):
                     continue
 
-                psoup = BeautifulSoup(page.text, "html.parser")
-                title = ""
-                ogt = psoup.find("meta", attrs={"property": "og:title"})
-                if ogt and ogt.get("content"):
-                    title = ogt["content"].strip()
-                if not title and psoup.title and psoup.title.string:
-                    title = psoup.title.string.strip()
-                title = clean_html_text(title)
+                title = extract_title_best_effort(page.text)
                 if not title:
                     continue
 
@@ -431,6 +365,142 @@ def fetch_now_today_html(source_key: str, source_name: str, home_url: str, color
                 continue
     except Exception as e:
         st.warning(f"[Now HTML] 讀取失敗：{e}")
+
+    out.sort(key=lambda x: x.timestamp, reverse=True)
+    return mark_new_and_remember(source_key, out[:limit])
+
+
+def fetch_stheadline_realtime_today(source_key: str, source_name: str, list_url: str, color: str, limit: int = 10) -> List[Article]:
+    """
+    星島（stheadline）真爬蟲：
+    1) 抓 realtimenews 列表
+    2) 逐條進入文章頁取 og:title + published time
+    """
+    out: List[Article] = []
+    try:
+        resp = safe_get(list_url, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        links: List[str] = []
+        for a in soup.select("a[href]"):
+            href = a.get("href", "").strip()
+            if not href:
+                continue
+            if href.startswith("/"):
+                href = "https://www.stheadline.com" + href
+
+            # realtime article url typical: /realtime-hk/xxxx/...  or /realtime-china/...
+            if href.startswith("https://www.stheadline.com/realtime-"):
+                links.append(href)
+
+        # dedup keep order
+        seen = set()
+        dedup = []
+        for x in links:
+            if x not in seen:
+                seen.add(x)
+                dedup.append(x)
+
+        dedup = dedup[:160]
+
+        for link in dedup:
+            try:
+                page = safe_get(link, timeout=12)
+                if page.status_code != 200:
+                    continue
+
+                dt = extract_meta_published_time(page.text)
+                if not dt or not is_today_hk(dt):
+                    continue
+
+                title = extract_title_best_effort(page.text)
+                if not title:
+                    continue
+
+                out.append(Article(source=source_name, title=title, link=link, timestamp=dt, time_str=dt.strftime("%H:%M"), color=color))
+                if len(out) >= limit:
+                    break
+            except Exception:
+                continue
+
+    except Exception as e:
+        st.warning(f"[星島爬蟲] 讀取失敗：{e}")
+
+    out.sort(key=lambda x: x.timestamp, reverse=True)
+    return mark_new_and_remember(source_key, out[:limit])
+
+
+def fetch_oncc_sitemap_news_today(source_key: str, source_name: str, sitemap_url: str, color: str, limit: int = 10) -> List[Article]:
+    """
+    on.cc（東網）真爬蟲（news sitemap）：
+    1) 讀 sitemap_news.xml（通常含 publication_date）
+    2) 逐條抓文章頁取 og:title（避免 sitemap 不含 title 的情況）
+    """
+    out: List[Article] = []
+    try:
+        resp = safe_get(sitemap_url, timeout=15)
+        resp.raise_for_status()
+
+        xml = resp.text
+        root = ET.fromstring(xml)
+
+        # namespaces (best-effort)
+        ns = {
+            "sm": "http://www.sitemaps.org/schemas/sitemap/0.9",
+            "news": "http://www.google.com/schemas/sitemap-news/0.9",
+        }
+
+        urls = root.findall("sm:url", ns) if root.tag.endswith("urlset") else []
+
+        locs: List[Tuple[str, Optional[str]]] = []
+        for u in urls[:250]:
+            loc = u.findtext("sm:loc", default="", namespaces=ns).strip()
+            pub = u.findtext("news:news/news:publication_date", default="", namespaces=ns).strip()
+            if loc:
+                locs.append((loc, pub if pub else None))
+
+        # fallback if namespace parsing fails
+        if not locs:
+            for u in root.iter():
+                if u.tag.endswith("loc") and (u.text or "").strip().startswith("http"):
+                    locs.append(((u.text or "").strip(), None))
+
+        # iterate
+        for (link, pub_str) in locs:
+            try:
+                dt = None
+                if pub_str:
+                    try:
+                        dt0 = datetime.datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                        if dt0.tzinfo is None:
+                            dt0 = HK_TZ.localize(dt0)
+                        dt = dt0.astimezone(HK_TZ)
+                    except Exception:
+                        dt = None
+
+                page = safe_get(link, timeout=12)
+                if page.status_code != 200:
+                    continue
+
+                if dt is None:
+                    dt = extract_meta_published_time(page.text)
+
+                if not dt or not is_today_hk(dt):
+                    continue
+
+                title = extract_title_best_effort(page.text)
+                if not title:
+                    continue
+
+                out.append(Article(source=source_name, title=title, link=link, timestamp=dt, time_str=dt.strftime("%H:%M"), color=color))
+                if len(out) >= limit:
+                    break
+            except Exception:
+                continue
+
+    except Exception as e:
+        st.warning(f"[on.cc sitemap] 讀取失敗：{e}")
 
     out.sort(key=lambda x: x.timestamp, reverse=True)
     return mark_new_and_remember(source_key, out[:limit])
@@ -447,10 +517,12 @@ def cached(kind: str, args: Tuple):
         return fetch_hk01_today(*args)
     if kind == "google_today":
         return fetch_google_news_today(*args)
-    if kind == "tvb_combo":
-        return fetch_tvb_today_rss_then_sitemap(*args)
     if kind == "now_html":
         return fetch_now_today_html(*args)
+    if kind == "stheadline_realtime":
+        return fetch_stheadline_realtime_today(*args)
+    if kind == "oncc_sitemap":
+        return fetch_oncc_sitemap_news_today(*args)
     return []
 
 
@@ -466,7 +538,7 @@ with top_a:
 with top_b:
     auto_on = st.toggle("⏱️ 每分鐘自動更新", value=True)
 with top_c:
-    st.markdown("<div class='small-note'>NEW：代表本次運行首次見到的連結（會在同一個 session 內記住已出現過的連結）。</div>", unsafe_allow_html=True)
+    st.markdown("<div class='small-note'>NEW：代表本次運行首次見到的連結（同一個 session 內會記住已出現過的連結）。</div>", unsafe_allow_html=True)
 
 if auto_on:
     st_autorefresh(interval=60 * 1000, key="auto_refresh_60s")
@@ -499,24 +571,20 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown("<hr/>", unsafe_allow_html=True)
 
 # -----------------------
-# Media list you specified (5 columns grid, today only, 10 each)
-# Strategy:
-# - Official RSS/JSON: use those
-# - Otherwise: Google News RSS with site:domain (non-official) and filter out entertainment
+# Media list (5 columns grid)
 # -----------------------
 NEG_ENT = "-娛樂 -演唱會 -音樂 -歌手 -電影 -明星 -綜藝 -劇集 -頒獎禮 -花邊 -八卦 -KOL -旅遊 -美食"
 BASE_NEWS_HINT = "(新聞 OR 港聞 OR 本地 OR 時事 OR 政府 OR 立法會 OR 警方 OR 法庭 OR 交通 OR 天氣 OR 經濟 OR 財經)"
 
-
 MEDIA_SOURCES = [
     # key, display_name, kind, payload, color, warn_non_official
-    ("rthk", "RTHK（本地）", "rss_today", ("rthk", "RTHK（本地）", "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "#FF9800", limit_each), False),
+    ("rthk", "RTHK（本地）", "rss_today",
+     ("rthk", "RTHK（本地）", "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "#FF9800", limit_each),
+     False),
 
-    # 商業電台：用 Google News + 排除娛樂
-    ("cr", "商業電台（新聞）", "google_today",
-     ("cr", "商業電台（新聞過濾）",
-      '(881903 OR "商業電台" OR "叱咤903") ' + BASE_NEWS_HINT + " " + NEG_ENT,
-      "#F59E0B", limit_each),
+    # 商業電台：仍用 Google News（因 881903/903 多為動態頁），加強排除娛樂
+    ("cr", "商業電台（新聞過濾）", "google_today",
+     ("cr", "商業電台（新聞過濾）", '(881903 OR "商業電台" OR "叱咤903") ' + BASE_NEWS_HINT + " " + NEG_ENT, "#F59E0B", limit_each),
      True),
 
     # HK01：JSON
@@ -529,57 +597,55 @@ MEDIA_SOURCES = [
      ("now", "Now（HTML）", "https://news.now.com/home", "#3B82F6", limit_each),
      False),
 
-    # TVB：RSS + sitemap fallback
-    ("tvb", "TVB 新聞", "tvb_combo",
-     ("tvb", "TVB", "https://news.tvb.com/rss/local.xml", "https://news.tvb.com/sitemap.xml", "#10B981", limit_each),
+    # TVB：RSS（你原本已用；如需再加 fallback 可再擴展）
+    ("tvb", "TVB 新聞（本地 RSS）", "rss_today",
+     ("tvb", "TVB（本地 RSS）", "https://news.tvb.com/rss/local.xml", "#10B981", limit_each),
      False),
 
-    # 其餘：先用 Google News site:domain（非官方聚合）
-    ("mingpao", "明報", "google_today",
-     ("mingpao", "明報（聚合）", 'site:mingpao.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
-     True),
+    # ======== 你要求升級的三個 ========
+    # 明報：官方即時新聞 RSS（總目錄）
+    ("mingpao", "明報（官方即時 RSS）", "rss_today",
+     ("mingpao", "明報（官方即時）", "https://news.mingpao.com/rss/ins/all.xml", "#6B7280", limit_each),
+     False),
 
-    ("onc", "on.cc", "google_today",
-     ("onc", "on.cc（聚合）", 'site:on.cc ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
-     True),
+    # on.cc：sitemap 真爬蟲（news sitemap）
+    ("oncc", "on.cc（sitemap 爬蟲）", "oncc_sitemap",
+     ("oncc", "on.cc / 東網（sitemap）", "https://orientaldaily.on.cc/sitemap_news.xml", "#6B7280", limit_each),
+     False),
 
-    ("singtao", "星島", "google_today",
-     ("singtao", "星島（聚合）", 'site:stheadline.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
-     True),
+    # 星島：realtimenews 真爬蟲
+    ("singtao", "星島（即時 爬蟲）", "stheadline_realtime",
+     ("singtao", "星島頭條（即時）", "https://www.stheadline.com/realtimenews/%E5%8D%B3%E6%99%82", "#6B7280", limit_each),
+     False),
 
-    ("topick", "TOPick", "google_today",
+    # 其餘：暫仍以聚合（如你之後要逐個升級，我可以再做）
+    ("topick", "TOPick（聚合）", "google_today",
      ("topick", "TOPick（聚合）", 'site:topick.hket.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
      True),
-
-    ("hkej", "信報即時新聞", "google_today",
+    ("hkej", "信報即時（聚合）", "google_today",
      ("hkej", "信報即時（聚合）", 'site:hkej.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
      True),
-
-    ("cable", "Cable 即時新聞", "google_today",
+    ("cable", "Cable（聚合）", "google_today",
      ("cable", "Cable（聚合）", 'site:i-cable.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
      True),
-
-    ("hkcd", "香港商報", "google_today",
+    ("hkcd", "香港商報（聚合）", "google_today",
      ("hkcd", "香港商報（聚合）", 'site:hkcd.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
      True),
-
-    ("wenweipo", "文匯報", "google_today",
+    ("wenweipo", "文匯報（聚合）", "google_today",
      ("wenweipo", "文匯報（聚合）", 'site:wenweipo.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
      True),
-
-    ("dotdotnews", "點新聞", "google_today",
+    ("dotdotnews", "點新聞（聚合）", "google_today",
      ("dotdotnews", "點新聞（聚合）", 'site:dotdotnews.com ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
      True),
-
-    ("tkww", "大公文匯", "google_today",
+    ("tkww", "大公文匯（聚合）", "google_today",
      ("tkww", "大公文匯（聚合）", 'site:tkww.hk ' + BASE_NEWS_HINT + " " + NEG_ENT, "#6B7280", limit_each),
      True),
 ]
 
 st.markdown('<div class="section-wrap section-core">', unsafe_allow_html=True)
-st.markdown("### 📰 今日新聞（你指定的媒體｜每個 10 條｜5 欄並排｜只顯示今日）")
+st.markdown("### 📰 今日新聞（每個 10 條｜5 欄並排｜只顯示今日）")
 st.markdown(
-    "<div class='small-note'>註：未提供穩定官方 RSS/JSON 的媒體，暫以 Google News（site:domain）作「非官方聚合」替代；如你要逐個改成真爬蟲（requests/Playwright），我可再逐站升級。</div>",
+    "<div class='small-note'>註：標示「非官方聚合」者仍使用 Google News site:domain；如你要再升級（信報/點新聞/文匯/大公文匯/Cable…）我可按站逐個寫爬蟲。</div>",
     unsafe_allow_html=True,
 )
 
@@ -587,19 +653,12 @@ cols = st.columns(5)
 for idx, (key, name, kind, payload, warn_non_official) in enumerate(MEDIA_SOURCES):
     with cols[idx % 5]:
         st.markdown(f'<div class="source-header">📰 {name}</div>', unsafe_allow_html=True)
-
         with st.spinner("讀取中..."):
-            if kind == "tvb_combo":
-                # returns (items, flag)
-                tvb_items, _flag = cached("tvb_combo", payload)
-                st.markdown(render_articles(tvb_items, warn_non_official=False), unsafe_allow_html=True)
-            else:
-                items = cached(kind, payload)
-                st.markdown(render_articles(items, warn_non_official=warn_non_official), unsafe_allow_html=True)
+            items = cached(kind, payload)
+            st.markdown(render_articles(items, warn_non_official=warn_non_official), unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
 st.caption(
-    "提示：如某媒體長期顯示「今日暫無新聞」，多數原因是該站改版/反爬/動態渲染或 Google News 未即時收錄。"
-    "你可指定「要真爬蟲」的媒體，我會逐個改成 requests 或 Playwright 版本。"
+    "提示：若某站出現 403/反爬，通常需要加強 headers、降低抓取頻率、或改用 Playwright。"
 )
