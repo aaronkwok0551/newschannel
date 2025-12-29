@@ -60,8 +60,8 @@ body { font-family: "Microsoft JhengHei","PingFang TC",sans-serif; }
 }
 
 .empty{ color:#9ca3af;text-align:center;margin-top:20px; }
-.warn { color:#b45309; font-size:0.85rem; margin:6px 0 0 0; }
-.small { color:#6b7280; font-size:0.8rem; margin:0 0 8px 0; }
+.warn { color:#b45309; font-size:0.85rem; margin-top:6px; }
+.small { color:#6b7280; font-size:0.8rem; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -111,19 +111,10 @@ def parse_time(entry) -> Optional[datetime.datetime]:
 # =====================
 @st.cache_data(ttl=60)
 def fetch_today(url: str, color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
-    """
-    嚴格：只顯示「今日」新聞
-    - 有時間：HH:MM
-    - 無時間：顯示「今日」
-    - 若該來源無法判斷日期：fallback 取最新10條（顯示「今日」）
-    """
     try:
         feed = feedparser.parse(url)
-        if getattr(feed, "bozo", 0):
-            # bozo_exception 代表解析錯誤，但未必完全無 entries
-            pass
-
         today = now_hk().date()
+
         dated: List[Article] = []
         undated: List[Article] = []
 
@@ -139,55 +130,28 @@ def fetch_today(url: str, color: str, limit: int = 10) -> Tuple[List[Article], O
             elif not dt:
                 undated.append(Article(title, link, "今日", color))
 
-        items = (dated[:limit] if dated else undated[:limit])
+        items = dated[:limit] if dated else undated[:limit]
         if not items:
-            return [], "今日未有可顯示項目（或來源未提供可判斷日期）"
+            return [], "今日未有可顯示新聞"
         return items, None
 
     except Exception as e:
         return [], f"讀取失敗：{e}"
 
-@st.cache_data(ttl=60)
-def fetch_latest_only(url: str, color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
-    """
-    Telegram / 非標準時間來源：
-    - 不做「今日」過濾
-    - 永遠取最新10條
-    - 時間欄顯示「即時」
-    """
-    try:
-        feed = feedparser.parse(url)
-        out: List[Article] = []
-        for e in (feed.entries or [])[:limit]:
-            title = clean_text(getattr(e, "title", ""))
-            link = getattr(e, "link", "")
-            if not title or not link:
-                continue
-            out.append(Article(title, link, "即時", color))
-
-        if not out:
-            return [], "來源暫無可顯示項目（可能 route/網址錯）"
-        return out, None
-
-    except Exception as e:
-        return [], f"讀取失敗：{e}"
-
 # =====================
-# Render（一次性 HTML，避免黑底 code block）
+# Render（一次性 HTML，避免黑色 code block）
 # =====================
 def build_card_html(title: str, articles: List[Article], warn: Optional[str] = None) -> str:
     if not articles:
         items_html = "<div class='empty'>今日暫無新聞</div>"
     else:
-        parts = []
-        for a in articles:
-            parts.append(
-                f"""<div class="item" style="border-left-color:{a.color}">
+        items_html = "\n".join(
+            f"""<div class="item" style="border-left-color:{a.color}">
 <a href="{a.link}" target="_blank" rel="noopener noreferrer">{a.title}</a>
 <div class="item-meta">🕐 {a.time_str}</div>
 </div>"""
-            )
-        items_html = "\n".join(parts)
+            for a in articles
+        )
 
     warn_html = f"<div class='warn'>⚠️ {warn}</div>" if warn else ""
 
@@ -203,35 +167,29 @@ def build_card_html(title: str, articles: List[Article], warn: Optional[str] = N
     return textwrap.dedent(html_block).lstrip()
 
 # =====================
-# URLs / Sources（由你決定，不刪減）
+# RSSHub Base
 # =====================
 RSSHUB = "https://rsshub-production-9dfc.up.railway.app"
 
-# 第一排（固定）
+# =====================
+# 第一排（核心來源）
+# =====================
 GOV_ZH = "https://www.info.gov.hk/gia/rss/general_zh.xml"
 GOV_EN = "https://www.info.gov.hk/gia/rss/general_en.xml"
 RTHK = "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml"
-CR_TG = f"{RSSHUB}/telegram/channel/cr881903"
 
-# 你列出的其他媒體：全部保留位置（你可以逐個填 URL / RSSHub route）
-# 格式：(顯示名稱, url, 顏色, fetcher_type)
-# fetcher_type: "today" 或 "latest"
-SOURCES_OTHERS: List[Tuple[str, str, str, str]] = [
-    ("HK01（RSSHub）", f"{RSSHUB}/hk01/latest", "#1F4E79", "today"),
-    ("on.cc（RSSHub 即時）", "https://rsshub.app/oncc/zh-hant/news", "#EF4444", "today"),
-
-    # 下面係你要求清單全部保留「位置」——請你把 url 改成正確官方 RSS 或 RSSHub route
-    ("Now", "", "#3B82F6", "today"),
-    ("明報", "https://news.mingpao.com/rss/ins/s00001.xml", "#6B7280", "today"),
-    ("星島（即時）", "", "#6B7280", "today"),
-    ("TOPick（如不用可留空）", "", "#6B7280", "today"),
-    ("信報即時新聞", "", "#6B7280", "today"),
-    ("Cable 即時新聞", "", "#6B7280", "today"),
-    ("香港商報", "", "#6B7280", "today"),
-    ("文匯報", "", "#6B7280", "today"),
-    ("點新聞", "", "#6B7280", "today"),
-    ("大公文匯", "", "#6B7280", "today"),
-    ("TVB", "", "#10B981", "today"),
+# =====================
+# 其他新聞媒體（完全照你提供）
+# =====================
+OTHER_SOURCES = [
+    ("HK01", f"{RSSHUB}/hk01/latest", "#1F4E79"),
+    ("on.cc 東網", f"{RSSHUB}/oncc/zh-hant/news", "#EF4444"),
+    ("Now 新聞", f"{RSSHUB}/now/news", "#3B82F6"),
+    ("TVB 新聞", f"{RSSHUB}/tvb/news/tc", "#10B981"),
+    ("明報", "https://news.mingpao.com/rss/ins/s00001.xml", "#6B7280"),
+    ("信報即時", f"{RSSHUB}/hkej/index", "#92400e"),
+    ("星島即時", f"{RSSHUB}/stheadline/std/realtime", "#6B7280"),
+    ("i-CABLE 有線", f"{RSSHUB}/icable/all", "#DC2626"),
 ]
 
 # =====================
@@ -243,7 +201,7 @@ st.caption(f"最後更新（香港時間）：{now_hk().strftime('%Y-%m-%d %H:%M
 if st.toggle("每分鐘自動更新", value=True):
     st_autorefresh(interval=60_000, key="auto")
 
-# -------- 第一排（按你畫的 4 欄）--------
+# -------- 第一排（4 欄）--------
 row1 = st.columns(4)
 
 with row1[0]:
@@ -259,26 +217,14 @@ with row1[2]:
     st.markdown(build_card_html("RTHK", arts, warn), unsafe_allow_html=True)
 
 with row1[3]:
-    arts, warn = fetch_latest_only(CR_TG, "#2563EB")
-    st.markdown(build_card_html("商業電台（Telegram）", arts, warn), unsafe_allow_html=True)
+    st.markdown(build_card_html("（預留欄位）", [], "你可日後加入其他核心來源"), unsafe_allow_html=True)
 
-# -------- 第二排開始：其他媒體（由你決定清單；空 URL 會顯示提示）--------
+# -------- 第二排開始：其他媒體（5 欄對齊）--------
 st.markdown("---")
-st.subheader("其他新聞媒體（請填入 URL 或 RSSHub route）")
-st.markdown("<div class='small'>提示：空白 URL 代表尚未設定；填上後就會自動顯示。</div>", unsafe_allow_html=True)
+st.subheader("其他新聞媒體")
 
 cols = st.columns(5)
-col_idx = 0
-
-for name, url, color, mode in SOURCES_OTHERS:
-    with cols[col_idx % 5]:
-        if not url:
-            st.markdown(build_card_html(name, [], "未設定 URL / RSSHub route"), unsafe_allow_html=True)
-        else:
-            if mode == "latest":
-                arts, warn = fetch_latest_only(url, color)
-            else:
-                arts, warn = fetch_today(url, color)
-            st.markdown(build_card_html(name, arts, warn), unsafe_allow_html=True)
-
-    col_idx += 1
+for idx, (name, url, color) in enumerate(OTHER_SOURCES):
+    with cols[idx % 5]:
+        arts, warn = fetch_today(url, color)
+        st.markdown(build_card_html(name, arts, warn), unsafe_allow_html=True)
