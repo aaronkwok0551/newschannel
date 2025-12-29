@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import datetime
-import re
 import sys
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -10,6 +9,7 @@ from typing import Dict, List, Optional
 import feedparser
 import pytz
 import streamlit as st
+from bs4 import BeautifulSoup
 from streamlit_autorefresh import st_autorefresh
 
 # -----------------------
@@ -169,11 +169,16 @@ def is_today_hk(dt: datetime.datetime) -> bool:
     return dt.astimezone(HK_TZ).date() == now_hk().date()
 
 
-def clean_text(s: str) -> str:
-    if not s:
+def clean_text(raw: str) -> str:
+    """
+    Robust HTML cleanup for RSS titles/summaries.
+    Many HK media RSS embed HTML; regex is unreliable.
+    """
+    if not raw:
         return ""
-    s = re.sub(r"<.*?>", "", s)
-    return " ".join(s.strip().split())
+    soup = BeautifulSoup(raw, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    return " ".join(text.split())
 
 
 def parse_entry_time(entry) -> Optional[datetime.datetime]:
@@ -270,16 +275,8 @@ def fetch_rss_today(source_name: str, url: str, color: str, limit: int = 10) -> 
 # -----------------------
 # Sources
 # -----------------------
-# Put your RSSHub base in Streamlit secrets:
-#   RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
-RRSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
-try:
-    RSSHUB_BASE = (st.secrets.get("RSSHUB_BASE", "") or "").rstrip("/")
-except Exception:
-    RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
-
-# You can hardcode instead:
-# RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
+# Your RSSHub base (Railway)
+RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app".rstrip("/")
 
 OFFICIAL = [
     ("政府新聞（中）", "https://www.info.gov.hk/gia/rss/general_zh.xml", "#E74C3C", "官方RSS"),
@@ -289,13 +286,10 @@ OFFICIAL = [
     ("明報（即時）", "https://news.mingpao.com/rss/ins/s00001.xml", "#6B7280", "官方RSS"),
 ]
 
-# RSSHub + Telegram + (fallback) Google News
-# - on.cc 你已確認可用：/oncc/zh-hant/news
-# - 星島：你未找到 RSSHub route，先用 Google News RSS（可後續替換成官方 RSS 或自訂 RSSHub route）
 RSSHUB_AND_OTHERS = [
-    ("HK01（RSSHub）", f"{RSSHUB_BASE}/hk01/latest" if RSSHUB_BASE else "", "#1F4E79", "RSSHub"),
-    ("on.cc（即時｜RSSHub）", f"{RSSHUB_BASE}/oncc/zh-hant/news" if RSSHUB_BASE else "", "#ef4444", "RSSHub"),
-    ("商業電台（Telegram｜RSSHub）", f"{RSSHUB_BASE}/telegram/channel/cr881903" if RSSHUB_BASE else "", "#2563eb", "Telegram"),
+    ("HK01（RSSHub）", f"{RSSHUB_BASE}/hk01/latest", "#1F4E79", "RSSHub"),
+    ("on.cc（即時｜RSSHub）", f"{RSSHUB_BASE}/oncc/zh-hant/news", "#ef4444", "RSSHub"),
+    ("商業電台（Telegram｜RSSHub）", f"{RSSHUB_BASE}/telegram/channel/cr881903", "#2563eb", "Telegram"),
     (
         "星島（即時｜Google News 備援）",
         "https://news.google.com/rss/search?q=%E6%98%9F%E5%B3%B6%20(%E5%8D%B3%E6%99%82%20OR%20%E6%96%B0%E8%81%9E)&hl=zh-HK&gl=HK&ceid=HK:zh-Hant",
@@ -339,19 +333,6 @@ def badge_html(kind: str) -> str:
 
 
 def render_card(source_key: str, name: str, url: str, color: str, kind: str, limit: int = 10) -> str:
-    if not url:
-        # only RSSHub items should reach here; show a clear instruction
-        return f"""
-        <div class="source-card">
-          <div class="source-head">
-            <div class="source-title">{name}</div>
-            <div class="source-badges">{badge_html(kind)}</div>
-          </div>
-          <div class="source-meta">未設定 RSSHUB_BASE（此來源需要 RSSHub）</div>
-          <div class="items"><div class="empty">請先在 Streamlit secrets 或程式內設定 RSSHUB_BASE</div></div>
-        </div>
-        """
-
     try:
         arts = fetch_rss_today(name, url, color, limit=limit)
     except Exception as e:
@@ -426,4 +407,3 @@ st.caption(
     "提示：如某來源長期顯示「今日暫無新聞」，通常是該 RSS 沒有提供可解析的發佈時間，"
     "或該來源今天未更新。若你想把規則改為「最近 24 小時」會更寬鬆。"
 )
-
