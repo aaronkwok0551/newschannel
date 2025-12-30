@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import datetime
-import html as pyhtml
 import sys
+import html as pyhtml
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -30,7 +30,7 @@ HK_TZ = pytz.timezone("Asia/Hong_Kong")
 st.set_page_config(page_title="Tommy Sir後援會之新聞中心", layout="wide", page_icon="🗞️")
 
 # =====================
-# CSS（New 文字 + hover 永久取消 New（靠 JS 加 seen class））
+# CSS（New badge，hover 永久取消 New 由 JS 加 .seen）
 # =====================
 st.markdown(
     dedent(
@@ -51,9 +51,8 @@ st.markdown(
         }
         .news-row:hover{ background:#fafafa; }
 
-        .row-top{
-          display:flex;align-items:center;gap:8px;
-        }
+        .row-top{ display:flex;align-items:center;gap:8px; }
+
         .new-badge{
           display:inline-block;
           font-size:0.72rem;
@@ -65,8 +64,8 @@ st.markdown(
           font-weight:800;
           line-height:1.1;
           user-select:none;
+          white-space:nowrap;
         }
-        /* JS 會加 .seen → 永久隱藏 New */
         .news-row.seen .new-badge{ display:none; }
 
         .title-link{
@@ -81,11 +80,9 @@ st.markdown(
         .empty{ color:#9ca3af;text-align:center;margin-top:20px; }
         .warn{ color:#b45309;font-size:0.85rem;margin:6px 0 0 0; }
 
-        /* Cir 彈窗內容樣式 */
         .cir-box{
           border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fff;
         }
-        .cir-actions{ display:flex; gap:10px; margin:10px 0 0 0; }
         </style>
         """
     ),
@@ -93,19 +90,19 @@ st.markdown(
 )
 
 # =====================
-# Model
+# Data model
 # =====================
 @dataclass
 class Article:
     source: str
-    key: str  # 用於 checkbox / New 記錄
+    key: str
     title: str
     link: str
-    dt: Optional[datetime.datetime]  # HK time
+    dt: Optional[datetime.datetime]
     time_str: str
     color: str
-    content: str = ""               # 內文（RSS summary 或抽頁面）
-    is_new: bool = False            # 20 分鐘內「第一次見到」
+    content: str = ""
+    is_new: bool = False
 
 
 # =====================
@@ -114,21 +111,20 @@ class Article:
 def now_hk() -> datetime.datetime:
     return datetime.datetime.now(HK_TZ)
 
+def safe_key(s: str) -> str:
+    out = []
+    for ch in (s or ""):
+        if ch.isalnum() or ch in ("-", "_", ":", ".", "/"):
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out)[:220]
+
 def clean_text(raw: str) -> str:
     raw = pyhtml.unescape(raw or "")
     soup = BeautifulSoup(raw, "html.parser")
     text = soup.get_text(" ", strip=True)
     return " ".join(text.split())
-
-def safe_key(s: str) -> str:
-    # 只做簡單 key 安全化（避免 JS / widget key 出事）
-    out = []
-    for ch in (s or ""):
-        if ch.isalnum() or ch in ("-", "_", ":", "."):
-            out.append(ch)
-        else:
-            out.append("_")
-    return "".join(out)[:200]
 
 def parse_time_from_entry(entry) -> Optional[datetime.datetime]:
     if getattr(entry, "published_parsed", None):
@@ -151,10 +147,13 @@ def parse_time_from_entry(entry) -> Optional[datetime.datetime]:
 def chunked(lst: List, n: int) -> List[List]:
     return [lst[i:i + n] for i in range(0, len(lst), n)]
 
+def sort_articles_desc(articles: List[Article]) -> List[Article]:
+    with_dt = [a for a in articles if a.dt is not None]
+    without_dt = [a for a in articles if a.dt is None]
+    with_dt.sort(key=lambda x: x.dt, reverse=True)
+    return with_dt + without_dt
+
 def mark_new_by_first_seen(articles: List[Article], window_minutes: int = 20) -> None:
-    """
-    用「第一次見到 link 的時間」判斷新新聞（20 分鐘內）
-    """
     if "seen_links_first" not in st.session_state:
         st.session_state["seen_links_first"] = {}  # link -> first_seen_iso
 
@@ -179,28 +178,31 @@ def mark_new_by_first_seen(articles: List[Article], window_minutes: int = 20) ->
 
     st.session_state["seen_links_first"] = seen
 
-def sort_articles_desc(articles: List[Article]) -> List[Article]:
-    with_dt = [a for a in articles if a.dt is not None]
-    without_dt = [a for a in articles if a.dt is None]
-    with_dt.sort(key=lambda x: x.dt, reverse=True)
-    return with_dt + without_dt
-
 def clear_all_selections():
+    # 清掉 selected
     st.session_state["selected"] = {}
+    # 清掉所有 checkbox key
     for k in list(st.session_state.keys()):
         if isinstance(k, str) and k.startswith("cb::"):
             del st.session_state[k]
 
+
 # =====================
-# JS：hover 一次永久取消 New + 支援「清除 New 記錄」
+# JS：hover 一次永久取消 New（localStorage），支援 reset nonce 清除
+# （放 sidebar，用完全隱形 iframe，避免白框）
 # =====================
-def inject_new_hover_js(reset_nonce: str = ""):
-    """
-    Streamlit 會阻止 <script> 在 st.markdown 執行，所以必須用 components.html
-    reset_nonce：每次按「清除 New 記錄」就換一個 nonce 觸發清除 localStorage
-    """
+def inject_new_hover_js(reset_nonce: str):
     components.html(
         f"""
+        <html>
+        <head>
+          <style>
+            html, body {{
+              margin:0; padding:0; width:0; height:0; overflow:hidden; background:transparent;
+            }}
+          </style>
+        </head>
+        <body>
         <script>
         (function(){{
           const KEY = "seenNewKeys";
@@ -214,7 +216,7 @@ def inject_new_hover_js(reset_nonce: str = ""):
             try {{ localStorage.setItem(KEY, JSON.stringify(obj)); }} catch(e){{}}
           }}
 
-          // reset：只要 nonce 變化就清除
+          // reset：nonce 變化就清除
           try {{
             const last = localStorage.getItem("__NEW_RESET_NONCE__") || "";
             if (RESET_NONCE && RESET_NONCE !== last) {{
@@ -249,12 +251,15 @@ def inject_new_hover_js(reset_nonce: str = ""):
             }}, true);
           }}
 
-          setTimeout(applySeen, 80);
+          setTimeout(applySeen, 50);
         }})();
         </script>
+        </body>
+        </html>
         """,
         height=0,
     )
+
 
 # =====================
 # Fetchers
@@ -275,7 +280,7 @@ def fetch_rss(url: str, source_name: str, color: str, limit: int = 12) -> Tuple[
             return [], "未有 entries（可能來源暫時無更新／或路由變更）"
 
         out: List[Article] = []
-        for idx, e in enumerate(feed.entries[: (limit * 3)]):
+        for e in feed.entries[: (limit * 3)]:
             title = clean_text(getattr(e, "title", "") or "")
             link = getattr(e, "link", "") or ""
             if not title or not link:
@@ -284,7 +289,7 @@ def fetch_rss(url: str, source_name: str, color: str, limit: int = 12) -> Tuple[
             dt = parse_time_from_entry(e)
             time_str = dt.strftime("%H:%M") if dt else "—"
 
-            # 內文：優先 summary / content
+            # RSS 內文：summary / content
             summary = ""
             if getattr(e, "summary", None):
                 summary = clean_text(getattr(e, "summary", "") or "")
@@ -296,7 +301,6 @@ def fetch_rss(url: str, source_name: str, color: str, limit: int = 12) -> Tuple[
                     summary = ""
 
             key = safe_key(f"{source_name}::{link}")
-
             out.append(
                 Article(
                     source=source_name,
@@ -309,6 +313,7 @@ def fetch_rss(url: str, source_name: str, color: str, limit: int = 12) -> Tuple[
                     content=summary,
                 )
             )
+
             if len(out) >= limit:
                 break
 
@@ -340,19 +345,6 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
                 if isinstance(v, list):
                     candidates = v
                     break
-            if candidates is None:
-                for v in data.values():
-                    if isinstance(v, list):
-                        candidates = v
-                        break
-                    if isinstance(v, dict):
-                        for kk in ("data", "list", "news", "items", "result"):
-                            vv = v.get(kk)
-                            if isinstance(vv, list):
-                                candidates = vv
-                                break
-                    if candidates is not None:
-                        break
 
         if not candidates:
             return [], "Now API 回傳結構已變（找不到新聞列表）"
@@ -365,14 +357,9 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
             title = clean_text(str(it.get("title") or it.get("newsTitle") or it.get("headline") or ""))
             news_id = str(it.get("newsId") or "").strip()
 
-            link = ""
-            if news_id:
-                link = f"https://news.now.com/home/local/player?newsId={news_id}"
-            else:
-                raw = str(it.get("shareUrl") or it.get("url") or it.get("link") or "").strip()
-                if raw.startswith("/"):
-                    raw = "https://news.now.com" + raw
-                link = raw
+            link = f"https://news.now.com/home/local/player?newsId={news_id}" if news_id else ""
+            if not title or not link:
+                continue
 
             dt = None
             time_str = "—"
@@ -394,21 +381,19 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
                     dt = None
                     time_str = "—"
 
-            # Now list 通常無完整內文 → 留空（之後 Cir 時可 fallback 用 RSS summary/或你日後加 detail API）
             key = safe_key(f"{source_name}::{link}")
-            if title and link:
-                out.append(
-                    Article(
-                        source=source_name,
-                        key=key,
-                        title=title,
-                        link=link,
-                        dt=dt,
-                        time_str=time_str,
-                        color=color,
-                        content="",
-                    )
+            out.append(
+                Article(
+                    source=source_name,
+                    key=key,
+                    title=title,
+                    link=link,
+                    dt=dt,
+                    time_str=time_str,
+                    color=color,
+                    content="",   # Now list 無 summary
                 )
+            )
             if len(out) >= limit:
                 break
 
@@ -423,56 +408,40 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
 
 @st.cache_data(ttl=300)
 def fetch_article_body(url: str) -> str:
-    """
-    盡量從文章頁面抽內文（簡單 heuristic）
-    - 不是所有媒體都一定抽到（可能有 JS / paywall / 防爬）
-    - 抽不到就回傳空字串
-    """
+    """抽文章內文（簡單 heuristic）；抽不到就回空字串"""
     if not url:
         return ""
     try:
         r = requests.get(url, timeout=15, headers=DEFAULT_HEADERS)
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
 
-        # 移除無用
+        soup = BeautifulSoup(r.text, "html.parser")
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
 
-        # 優先 meta description
+        # meta description（可作 fallback）
+        desc = ""
         meta = soup.find("meta", attrs={"name": "description"})
         if meta and meta.get("content"):
             desc = clean_text(meta.get("content", ""))
-        else:
-            desc = ""
 
-        # 收集 <p>
         ps = [clean_text(p.get_text(" ", strip=True)) for p in soup.find_all("p")]
         ps = [t for t in ps if t and len(t) >= 15]
 
-        body = ""
-        if ps:
-            # 取較長的前幾段
-            body = "\n\n".join(ps[:12])
+        body = "\n\n".join(ps[:12]).strip() if ps else ""
         if desc and (not body or len(desc) > len(body) * 0.6):
-            # desc 有時更乾淨
             body = desc if not body else (desc + "\n\n" + body)
 
-        body = body.strip()
-        # 避免太長
         if len(body) > 2400:
             body = body[:2400].rstrip() + "…"
-        return body
+        return body.strip()
     except Exception:
         return ""
 
-# =====================
-# Cir 內容生成 + 一鍵複製（JS）
-# =====================
 def build_cir_text(selected: List[Article]) -> str:
     blocks = []
     for a in selected:
-        body = a.content.strip()
+        body = (a.content or "").strip()
         if not body:
             body = fetch_article_body(a.link).strip()
         if not body:
@@ -492,62 +461,69 @@ def build_cir_text(selected: List[Article]) -> str:
                 ]
             )
         )
-    return "\n\n" + ("\n\n".join(blocks)).strip()
+    return ("\n\n".join(blocks)).strip()
 
-def copy_button_html(text: str, btn_label: str = "一鍵複製"):
-    # 用 components 注入 clipboard copy
+def copy_button_html(text: str):
     safe = pyhtml.escape(text).replace("\n", "\\n")
     components.html(
         f"""
-        <div class="cir-actions">
-          <button id="copyBtn"
-            style="padding:8px 12px;border-radius:10px;border:1px solid #d1d5db;background:#111827;color:#fff;font-weight:700;cursor:pointer;">
-            {pyhtml.escape(btn_label)}
-          </button>
-          <span id="copyMsg" style="font-family:monospace;color:#6b7280;"></span>
-        </div>
-        <script>
-          (function(){{
-            const btn = document.getElementById("copyBtn");
-            const msg = document.getElementById("copyMsg");
-            if(!btn) return;
-            btn.onclick = async function(){{
-              try {{
-                await navigator.clipboard.writeText("{safe}");
-                msg.textContent = "已複製";
-                setTimeout(()=>msg.textContent="", 1200);
-              }} catch(e) {{
-                msg.textContent = "複製失敗（請手動全選複製）";
-              }}
-            }};
-          }})();
-        </script>
+        <html>
+        <head>
+          <style>
+            html, body {{ margin:0; padding:0; background:transparent; }}
+            button {{
+              padding:8px 12px;border-radius:10px;border:1px solid #d1d5db;
+              background:#111827;color:#fff;font-weight:800;cursor:pointer;
+            }}
+            span {{ font-family:monospace;color:#6b7280;margin-left:8px; }}
+          </style>
+        </head>
+        <body>
+          <button id="copyBtn">一鍵複製</button>
+          <span id="copyMsg"></span>
+          <script>
+            (function(){{
+              const btn = document.getElementById("copyBtn");
+              const msg = document.getElementById("copyMsg");
+              btn.onclick = async function(){{
+                try {{
+                  await navigator.clipboard.writeText("{safe}");
+                  msg.textContent = "已複製";
+                  setTimeout(()=>msg.textContent="", 1200);
+                }} catch(e) {{
+                  msg.textContent = "複製失敗（請手動全選複製）";
+                }}
+              }};
+            }})();
+          </script>
+        </body>
+        </html>
         """,
-        height=55,
+        height=44,
     )
 
-# =====================
-# URLS
-# =====================
-GOV_ZH = "https://www.info.gov.hk/gia/rss/general_zh.xml"
-GOV_EN = "https://www.info.gov.hk/gia/rss/general_en.xml"
-RTHK = "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml"
 
 # =====================
-# Session State init
+# Session state init
 # =====================
 if "selected" not in st.session_state:
-    st.session_state["selected"] = {}  # key -> Article dict
+    st.session_state["selected"] = {}
 if "reset_new_nonce" not in st.session_state:
     st.session_state["reset_new_nonce"] = ""
 
+
 # =====================
-# UI header
+# UI Header
 # =====================
 st.title("🗞️ Tommy Sir後援會之新聞中心")
 st.caption(f"最後更新（香港時間）：{now_hk().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Sidebar / Action Panel（固定左邊）
+
+# =====================
+# Sidebar Action Panel（固定左邊）
+# =====================
+MAX_PICK = 5
+
 with st.sidebar:
     st.subheader("Action Panel")
 
@@ -562,30 +538,36 @@ with st.sidebar:
 
     limit = st.slider("每個來源顯示幾多條", 5, 30, 12, 1)
 
-    # 你要求：一鍵清除 New 記錄（localStorage）
-    if st.button("清除 New 記錄（所有媒體）", use_container_width=True):
+    # 注入 hover-new JS（放 sidebar，避免白框）
+    inject_new_hover_js(reset_nonce=st.session_state.get("reset_new_nonce", ""))
+
+    # 清除紀錄（同時清伺服端 + 瀏覽器端）
+    if st.button("清除 New 紀錄（全部）", use_container_width=True):
+        # 伺服端：清 20 分鐘 first seen
+        st.session_state["seen_links_first"] = {}
+        # 瀏覽器端：透過 nonce 變化清 localStorage
         st.session_state["reset_new_nonce"] = now_hk().isoformat()
         st.rerun()
 
-    # 你要求：一鍵取消全部 checkbox（要真正 uncheck）
+    # 一鍵取消選擇（真正 uncheck）
     if st.button("一鍵取消所有選擇", use_container_width=True):
         clear_all_selections()
         st.rerun()
 
     st.divider()
-    sel_keys = list(st.session_state.get("selected", {}).keys())
-    st.write(f"已選：**{len(sel_keys)}** / 5")
+    sel_count = len(st.session_state.get("selected", {}))
+    st.write(f"已選：**{sel_count}** / {MAX_PICK}")
 
-    # 生成 Cir（Popup / Dialog；沒有就 fallback 用 sidebar）
-    can_generate = len(sel_keys) > 0
-    gen = st.button("要 Cir 嘅新聞（生成）", use_container_width=True, disabled=not can_generate)
+    gen = st.button("要 Cir 嘅新聞（生成）", use_container_width=True, disabled=(sel_count == 0))
 
-# 注入 hover New JS（含 reset nonce）
-inject_new_hover_js(reset_nonce=st.session_state.get("reset_new_nonce", ""))
 
 # =====================
-# Sources（保持你原本；Now 特別 API）
+# Sources
 # =====================
+GOV_ZH = "https://www.info.gov.hk/gia/rss/general_zh.xml"
+GOV_EN = "https://www.info.gov.hk/gia/rss/general_en.xml"
+RTHK = "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml"
+
 sources = [
     {"name": "政府新聞（中文）", "type": "rss", "url": GOV_ZH, "color": "#E74C3C"},
     {"name": "政府新聞（英文）", "type": "rss", "url": GOV_EN, "color": "#C0392B"},
@@ -602,61 +584,36 @@ sources = [
     {"name": "TVB 新聞", "type": "rss", "url": f"{rsshub_base}/tvb/news/tc", "color": "#0EA5E9"},
 ]
 
+
 # =====================
-# Render cards：每行 4 個（保持方格內顯示）
+# Checkbox callback（解決：要選兩次先計到）
+# =====================
+def on_checkbox_change(article_dict: dict):
+    key = article_dict["key"]
+    cb_key = f"cb::{key}"
+    checked = bool(st.session_state.get(cb_key, False))
+
+    sel: Dict[str, dict] = st.session_state.get("selected", {})
+
+    if checked:
+        # 上限控制
+        if key not in sel and len(sel) >= MAX_PICK:
+            st.session_state[cb_key] = False
+            st.toast(f"最多只可選 {MAX_PICK} 條", icon="⚠️")
+            return
+        sel[key] = article_dict
+    else:
+        if key in sel:
+            del sel[key]
+
+    st.session_state["selected"] = sel
+
+
+# =====================
+# Render：每行 4 欄
 # =====================
 cols_per_row = 4
 rows = chunked(sources, cols_per_row)
-
-# 每次 rerun，先建立選擇上限（你之前提到 5 條）
-MAX_PICK = 5
-
-def upsert_selected(a: Article, checked: bool):
-    sel: Dict[str, dict] = st.session_state.get("selected", {})
-    if checked:
-        # 限制最多 5 條
-        if a.key not in sel and len(sel) >= MAX_PICK:
-            # 超過就拒絕，並強制把 checkbox 拉回 False
-            st.session_state[f"cb::{a.key}"] = False
-            st.toast(f"最多只可選 {MAX_PICK} 條", icon="⚠️")
-            return
-        sel[a.key] = a.__dict__
-    else:
-        if a.key in sel:
-            del sel[a.key]
-    st.session_state["selected"] = sel
-
-def render_article_row(a: Article):
-    # checkbox + New + link + time，全在方格內
-    row_key = f"cb::{a.key}"
-
-    # 這個容器會有 data-k 俾 JS 記住「seen」
-    st.markdown(
-        f'<div class="news-row" data-k="{pyhtml.escape(a.key)}" style="border-left-color:{a.color};">',
-        unsafe_allow_html=True,
-    )
-
-    c0, c1 = st.columns([0.12, 0.88], vertical_alignment="center")
-    with c0:
-        # 初始值：根據 selected
-        sel = st.session_state.get("selected", {})
-        if row_key not in st.session_state:
-            st.session_state[row_key] = (a.key in sel)
-        checked = st.checkbox("", key=row_key, label_visibility="collapsed")
-    with c1:
-        top = '<div class="row-top">'
-        if a.is_new:
-            top += '<span class="new-badge">New</span>'
-        top += f'<a class="title-link" href="{pyhtml.escape(a.link)}" target="_blank" rel="noopener noreferrer">{pyhtml.escape(a.title)}</a>'
-        top += "</div>"
-        st.markdown(top, unsafe_allow_html=True)
-        st.markdown(f'<div class="item-meta">🕐 {pyhtml.escape(a.time_str)}</div>', unsafe_allow_html=True)
-
-    # 收尾 div
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # 同步選擇狀態
-    upsert_selected(a, checked)
 
 for row in rows:
     cols = st.columns(len(row))
@@ -670,31 +627,61 @@ for row in rows:
             else:
                 arts, warn = fetch_rss(src["url"], src["name"], src["color"], limit=limit)
 
-            # 20 分鐘 New（只顯示 New 字樣，不用紅色）
             mark_new_by_first_seen(arts, window_minutes=20)
             arts = sort_articles_desc(arts)
 
             if not arts:
                 st.markdown("<div class='empty'>暫無內容</div>", unsafe_allow_html=True)
             else:
-                # 右邊不自動縮減到 5 條：你上次提到想縮減
-                # 這裡按你的要求：如果左邊已選滿 5 條，仍然顯示，但 checkbox 會限制不再新增
                 for a in arts:
-                    render_article_row(a)
+                    cb_key = f"cb::{a.key}"
+
+                    # 初始值：以 selected 作準
+                    selected_map: Dict[str, dict] = st.session_state.get("selected", {})
+                    default_val = a.key in selected_map
+
+                    # 容器（data-k 俾 hover-js 記住 seen）
+                    st.markdown(
+                        f'<div class="news-row" data-k="{pyhtml.escape(a.key)}" style="border-left-color:{a.color};">',
+                        unsafe_allow_html=True,
+                    )
+
+                    c0, c1 = st.columns([0.12, 0.88], vertical_alignment="center")
+                    with c0:
+                        st.checkbox(
+                            "",
+                            key=cb_key,
+                            value=default_val,
+                            label_visibility="collapsed",
+                            on_change=on_checkbox_change,
+                            args=(a.__dict__,),
+                        )
+                    with c1:
+                        top = '<div class="row-top">'
+                        if a.is_new:
+                            top += '<span class="new-badge">New</span>'
+                        top += (
+                            f'<a class="title-link" href="{pyhtml.escape(a.link)}" target="_blank" rel="noopener noreferrer">'
+                            f"{pyhtml.escape(a.title)}</a>"
+                        )
+                        top += "</div>"
+                        st.markdown(top, unsafe_allow_html=True)
+                        st.markdown(f'<div class="item-meta">🕐 {pyhtml.escape(a.time_str)}</div>', unsafe_allow_html=True)
+
+                    st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("</div>", unsafe_allow_html=True)
             if warn:
                 st.markdown(f"<div class='warn'>⚠️ {pyhtml.escape(warn)}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
+
 # =====================
-# Popup / Dialog（生成 Cir 文本 + 一鍵複製）
-# 注意：你 Railway 的 streamlit 沒有 st.modal，所以用 st.dialog（有則用，冇則 fallback）
+# 生成 Cir：用 st.dialog（冇就 fallback sidebar）
 # =====================
 def show_cir_dialog():
     sel_map: Dict[str, dict] = st.session_state.get("selected", {})
     selected_articles = [Article(**v) for v in sel_map.values()]
-    # 按時間（有 dt 用 dt，冇就保持）
     selected_articles = sort_articles_desc(selected_articles)
 
     cir_text = build_cir_text(selected_articles)
@@ -702,10 +689,9 @@ def show_cir_dialog():
     st.markdown("<div class='cir-box'>", unsafe_allow_html=True)
     st.write("以下為「要 Cir 嘅新聞」格式（可一鍵複製）：")
     st.text_area("Cir 內容", value=cir_text, height=360, label_visibility="collapsed")
-    copy_button_html(cir_text, btn_label="一鍵複製 Cir 內容")
+    copy_button_html(cir_text)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# 觸發生成（sidebar 的 gen 按鈕）
 if gen:
     if hasattr(st, "dialog"):
         @st.dialog("要 Cir 嘅新聞（可複製）")
@@ -713,8 +699,6 @@ if gen:
             show_cir_dialog()
         _dlg()
     else:
-        # fallback：放在頁面頂部（但你話唔想，因為唔好複製）
-        # 沒有 st.dialog 時，只能退而求其次：放在 sidebar 底部
         with st.sidebar:
             st.warning("你目前的 Streamlit 不支援彈窗（st.dialog）。已改為在左邊顯示。")
             show_cir_dialog()
