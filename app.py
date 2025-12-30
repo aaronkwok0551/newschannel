@@ -379,7 +379,7 @@ sources = [
     {"name": "on.cc 東網", "type": "rss", "url": f"{rsshub_base}/oncc/zh-hant/news", "color": "#7C3AED"},
     {"name": "星島即時", "type": "rss", "url": f"https://www.stheadline.com/rss", "color": "#F97316"},
     {"name": "明報即時", "type": "rss", "url": f"https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
-    {"name": "i-CABLE 有線", "type": "rss", "url": f"{https://www.i-cable.com/feed", "color": "#A855F7"},
+    {"name": "i-CABLE 有線", "type": "rss", "url": f"https://www.i-cable.com/feed", "color": "#A855F7"},
     {"name": "經濟日報", "type": "rss", "url": f"https://www.hket.com/rss/hongkong", "color": "#7C3AED"},
     {"name": "信報即時", "type": "rss", "url": f"{rsshub_base}/hkej/index", "color": "#64748B"},
     {"name": "巴士的報", "type": "rss", "url": f"https://www.bastillepost.com/hongkong/feed", "color": "#7C3AED"},
@@ -411,6 +411,7 @@ for row in rows:
             arts = sort_articles_desc(arts)
 
             st.markdown(build_card_html(src["name"], arts, warn=warn), unsafe_allow_html=True)
+
 
 
 
