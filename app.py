@@ -28,7 +28,7 @@ HK_TZ = pytz.timezone("Asia/Hong_Kong")
 st.set_page_config(page_title="Tommy Sir後援會之新聞中心", layout="wide", page_icon="🗞️")
 
 # =====================
-# CSS（4欄卡片 + NEW badge + 左邊panel）
+# CSS
 # =====================
 st.markdown(
     dedent(
@@ -44,12 +44,6 @@ st.markdown(
         }
         .items{ overflow-y:auto; padding-right:6px; flex:1; }
 
-        .rowline{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-        .titleline a{ text-decoration:none;color:#111827;font-weight:650;line-height:1.35; }
-        .titleline a:hover{ color:#2563eb; }
-
-        .meta{ font-size:0.78rem;color:#6b7280;font-family:monospace;margin-top:2px; display:flex; align-items:center; gap:8px; }
-
         .badge-new{
           display:inline-block;
           font-size:0.72rem;
@@ -58,14 +52,24 @@ st.markdown(
           border-radius:999px;
           background:#111827;
           color:#fff;
+          margin-left:6px;
         }
 
         .itemwrap{
           border-left:4px solid #3b82f6;border-radius:10px;
           padding:8px 10px;margin:10px 0;background:#fff;
         }
+        .titleline a{ text-decoration:none;color:#111827;font-weight:650;line-height:1.35; }
+        .titleline a:hover{ color:#2563eb; }
+        .meta{ font-size:0.78rem;color:#6b7280;font-family:monospace;margin-top:2px; }
+
         .warn{ color:#b45309;font-size:0.85rem;margin:6px 0 0 0; }
         .empty{ color:#9ca3af;text-align:center;margin-top:20px; }
+
+        .cirbox{
+          border:1px solid #e5e7eb;border-radius:12px;
+          padding:12px;background:#fff;
+        }
         </style>
         """
     ),
@@ -77,22 +81,84 @@ st.markdown(
 # =====================
 @dataclass
 class Article:
-    id: str                 # unique id for streamlit widgets
+    id: str
     source: str
     title: str
     link: str
-    dt: Optional[datetime.datetime]  # HK time if parseable
+    dt: Optional[datetime.datetime]
     time_str: str
     color: str
     is_new: bool = False
-    content: str = ""       # optional extracted summary/content
+    content: str = ""
 
 # =====================
-# Helpers
+# State helpers
 # =====================
 def now_hk() -> datetime.datetime:
     return datetime.datetime.now(HK_TZ)
 
+def _ensure_state():
+    st.session_state.setdefault("seen_first", {})      # link -> first seen iso
+    st.session_state.setdefault("read_links", set())   # link set (cancel NEW)
+    st.session_state.setdefault("selected", {})        # article_id -> bool
+    st.session_state.setdefault("selected_order", [])  # preserve order
+    st.session_state.setdefault("article_cache", {})   # article_id -> Article
+    st.session_state.setdefault("show_cir_panel", False)
+
+def mark_read(link: str):
+    _ensure_state()
+    if link:
+        st.session_state["read_links"].add(link)
+
+def compute_new_flag(link: str, window_minutes: int = 20) -> bool:
+    _ensure_state()
+    if not link:
+        return False
+
+    now = now_hk()
+    seen_first: Dict[str, str] = st.session_state["seen_first"]
+    read_links: set = st.session_state["read_links"]
+
+    if link in read_links:
+        return False
+
+    if link not in seen_first:
+        seen_first[link] = now.isoformat()
+
+    try:
+        first_seen = dtparser.parse(seen_first[link])
+        if first_seen.tzinfo is None:
+            first_seen = HK_TZ.localize(first_seen)
+        first_seen = first_seen.astimezone(HK_TZ)
+        return (now - first_seen) <= datetime.timedelta(minutes=window_minutes)
+    except Exception:
+        return False
+
+def cache_articles(all_articles: List[Article]):
+    _ensure_state()
+    st.session_state["article_cache"] = {a.id: a for a in all_articles}
+
+def get_selected_articles() -> List[Article]:
+    _ensure_state()
+    cache: Dict[str, Article] = st.session_state["article_cache"]
+    selected: Dict[str, bool] = st.session_state["selected"]
+    order: List[str] = st.session_state["selected_order"]
+
+    out: List[Article] = []
+    for aid in order:
+        if selected.get(aid) and aid in cache:
+            out.append(cache[aid])
+
+    # 補漏
+    for aid, v in selected.items():
+        if v and aid in cache and aid not in order:
+            out.append(cache[aid])
+
+    return out
+
+# =====================
+# Text helpers
+# =====================
 def clean_text(raw: str) -> str:
     raw = html.unescape(raw or "")
     soup = BeautifulSoup(raw, "html.parser")
@@ -117,50 +183,26 @@ def parse_time_from_entry(entry) -> Optional[datetime.datetime]:
                 pass
     return None
 
-def chunked(lst: List, n: int) -> List[List]:
-    return [lst[i:i+n] for i in range(0, len(lst), n)]
-
-def _ensure_state():
-    st.session_state.setdefault("seen_first", {})      # link -> first seen iso (for NEW window)
-    st.session_state.setdefault("read_links", set())   # links user already "touched" (remove NEW)
-    st.session_state.setdefault("selected", {})        # id -> True/False (checkbox state)
-    st.session_state.setdefault("selected_order", [])  # preserve selection order (optional)
-
-def compute_new_flag(link: str, window_minutes: int = 20) -> bool:
-    """NEW = first seen within window AND not marked as read"""
-    _ensure_state()
-    if not link:
-        return False
-
-    now = now_hk()
-    seen_first: Dict[str, str] = st.session_state["seen_first"]
-    read_links: set = st.session_state["read_links"]
-
-    if link in read_links:
-        return False
-
-    if link not in seen_first:
-        seen_first[link] = now.isoformat()
-
-    try:
-        first_seen = dtparser.parse(seen_first[link])
-        if first_seen.tzinfo is None:
-            first_seen = HK_TZ.localize(first_seen)
-        first_seen = first_seen.astimezone(HK_TZ)
-        return (now - first_seen) <= datetime.timedelta(minutes=window_minutes)
-    except Exception:
-        return False
-
-def mark_read(link: str):
-    _ensure_state()
-    if link:
-        st.session_state["read_links"].add(link)
-
 def sort_articles_desc(articles: List[Article]) -> List[Article]:
     with_dt = [a for a in articles if a.dt is not None]
     without_dt = [a for a in articles if a.dt is None]
     with_dt.sort(key=lambda x: x.dt, reverse=True)
     return with_dt + without_dt
+
+def chunked(lst: List, n: int) -> List[List]:
+    return [lst[i:i+n] for i in range(0, len(lst), n)]
+
+def format_cir_text(articles: List[Article]) -> str:
+    blocks = []
+    for a in articles:
+        pub = a.time_str or "—"
+        body = (a.content or "").strip()
+        if body:
+            body = body[:1200]
+        blocks.append(
+            f"{a.source}：{a.title}\n[{pub}]\n\n{body}\n\n{a.link}\n\nEnds"
+        )
+    return "\n\n---\n\n".join(blocks)
 
 # =====================
 # Fetchers
@@ -189,13 +231,10 @@ def fetch_rss(url: str, source_name: str, color: str, limit: int = 12) -> Tuple[
 
             dt = parse_time_from_entry(e)
             time_str = dt.strftime("%H:%M") if dt else "—"
-
-            # 嘗試用 summary 作內容（有就用，冇就空）
             summary = clean_text(getattr(e, "summary", "") or getattr(e, "description", "") or "")
 
             art_id = f"{source_name}-{i}-{abs(hash(link))}"
             i += 1
-
             out.append(
                 Article(
                     id=art_id,
@@ -267,7 +306,6 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
             if not title:
                 continue
 
-            link = ""
             if news_id:
                 link = f"https://news.now.com/home/local/player?newsId={news_id}"
             else:
@@ -276,7 +314,6 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
                     raw = "https://news.now.com" + raw
                 link = raw
 
-            # time (epoch ms common)
             dt = None
             time_str = "—"
             raw_time = it.get("publishDate") or it.get("publishTime") or it.get("publishedAt") or it.get("date")
@@ -296,12 +333,10 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
                 except Exception:
                     dt, time_str = None, "—"
 
-            # content (Now sometimes has summary)
             content = clean_text(str(it.get("content") or it.get("newsContent") or it.get("summary") or ""))
 
             art_id = f"{source_name}-{i}-{abs(hash(link))}"
             i += 1
-
             out.append(
                 Article(
                     id=art_id,
@@ -327,131 +362,98 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
         return [], f"{type(e).__name__}: {e}"
 
 # =====================
-# Sidebar action panel (固定左邊)
+# Sidebar action panel（左邊固定）
 # =====================
 def sidebar_panel():
     _ensure_state()
 
     st.sidebar.title("Action Panel")
-    st.sidebar.caption("已選新聞會喺呢度管理")
+    st.sidebar.caption("選好新聞後按「要 Cir 嘅新聞」生成內容")
 
+    # 一鍵清除：清 checkbox + 清已選
     if st.sidebar.button("一鍵取消所有選擇", use_container_width=True):
-        # 清除所有 checkbox state
         for k in list(st.session_state.keys()):
             if str(k).startswith("cb__"):
                 st.session_state[k] = False
         st.session_state["selected"] = {}
         st.session_state["selected_order"] = []
+        st.session_state["show_cir_panel"] = False
+        st.rerun()
 
-    selected_items = get_selected_articles_from_cache()
+    selected_items = get_selected_articles()
     st.sidebar.markdown(f"**已選：{len(selected_items)} 條**")
 
-    # 顯示已選列表（只作摘要）
     if selected_items:
-        for a in selected_items[:30]:
+        for a in selected_items[:25]:
             st.sidebar.write(f"- {a.source}｜{a.time_str}｜{a.title[:25]}…")
-        if len(selected_items) > 30:
-            st.sidebar.caption(f"（仲有 {len(selected_items)-30} 條未顯示）")
+        if len(selected_items) > 25:
+            st.sidebar.caption(f"（仲有 {len(selected_items)-25} 條未顯示）")
 
-    # popup 按鈕
+    # 生成 Cir 面板（替代 popup）
     if st.sidebar.button("要 Cir 嘅新聞", use_container_width=True, disabled=(len(selected_items) == 0)):
-        st.session_state["open_dialog"] = True
+        st.session_state["show_cir_panel"] = True
 
-# 我哋要有一份「最新抓到嘅文章 cache」去對應 selected ids
-def cache_articles(all_articles: List[Article]):
-    st.session_state["article_cache"] = {a.id: a for a in all_articles}
-
-def get_selected_articles_from_cache() -> List[Article]:
+# =====================
+# Cir panel（主畫面右上方出現）
+# =====================
+def render_cir_panel():
     _ensure_state()
-    cache: Dict[str, Article] = st.session_state.get("article_cache", {})
-    selected: Dict[str, bool] = st.session_state.get("selected", {})
-    # 依照 selected_order 取
-    order = st.session_state.get("selected_order", [])
-    out = []
-    for aid in order:
-        if selected.get(aid) and aid in cache:
-            out.append(cache[aid])
-    # 補漏（如果 order 無）
-    for aid, v in selected.items():
-        if v and aid in cache and aid not in order:
-            out.append(cache[aid])
-    return out
-
-# =====================
-# Dialog (popup)
-# =====================
-def format_cir_text(articles: List[Article]) -> str:
-    lines = []
-    for a in articles:
-        pub = a.time_str or "—"
-        body = a.content.strip() if a.content else ""
-        if body:
-            body = body[:800]  # 避免太長（你想長都可以加大）
-        lines.append(
-            f"{a.source}：{a.title}\n[{pub}]\n\n{body}\n\n{a.link}\n\nEnds"
-        )
-    return "\n\n---\n\n".join(lines)
-
-def render_dialog_if_needed():
-    if not st.session_state.get("open_dialog"):
+    if not st.session_state.get("show_cir_panel"):
         return
 
-    selected_items = get_selected_articles_from_cache()
-    text = format_cir_text(selected_items)
+    selected_items = get_selected_articles()
+    cir_text = format_cir_text(selected_items)
 
-    # Streamlit 1.30+ 支持 st.dialog
-    try:
-        @st.dialog("要 Cir 嘅新聞")
-        def _dlg():
-            st.write("以下內容已按你要求格式生成（可直接複製）：")
-            st.code(text, language="text")
-            st.download_button(
-                "下載成文字檔（備用）",
-                data=text.encode("utf-8"),
-                file_name="cir_news.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
+    st.markdown("<div class='cirbox'>", unsafe_allow_html=True)
+    colA, colB = st.columns([1, 1])
+    with colA:
+        st.subheader("要 Cir 嘅新聞（可複製）")
+    with colB:
+        if st.button("關閉 Cir 面板", use_container_width=True):
+            st.session_state["show_cir_panel"] = False
+            st.rerun()
 
-            # 一鍵複製：用 HTML button + clipboard（只影響 dialog 內）
-            st.markdown(
-                f"""
-                <button id="copyBtn" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#111827;color:#fff;font-weight:700;">
-                  一鍵複製到剪貼簿
-                </button>
-                <textarea id="copyText" style="position:absolute;left:-9999px;top:-9999px;">{html.escape(text)}</textarea>
-                <script>
-                const btn = document.getElementById("copyBtn");
-                btn.addEventListener("click", async () => {{
-                    const t = document.getElementById("copyText").value;
-                    try {{
-                        await navigator.clipboard.writeText(t);
-                        btn.innerText = "已複製 ✅";
-                        setTimeout(()=>btn.innerText="一鍵複製到剪貼簿", 1500);
-                    }} catch(e) {{
-                        btn.innerText = "複製失敗（瀏覽器限制）";
-                        setTimeout(()=>btn.innerText="一鍵複製到剪貼簿", 1500);
-                    }}
-                }});
-                </script>
-                """,
-                unsafe_allow_html=True,
-            )
+    st.code(cir_text, language="text")
 
-            if st.button("關閉", use_container_width=True):
-                st.session_state["open_dialog"] = False
-                st.rerun()
+    # 一鍵複製（JS）
+    st.markdown(
+        f"""
+        <button id="copyBtn" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#111827;color:#fff;font-weight:700;">
+          一鍵複製到剪貼簿
+        </button>
+        <textarea id="copyText" style="position:absolute;left:-9999px;top:-9999px;">{html.escape(cir_text)}</textarea>
+        <script>
+        const btn = document.getElementById("copyBtn");
+        btn.addEventListener("click", async () => {{
+            const t = document.getElementById("copyText").value;
+            try {{
+                await navigator.clipboard.writeText(t);
+                btn.innerText = "已複製 ✅";
+                setTimeout(()=>btn.innerText="一鍵複製到剪貼簿", 1500);
+            }} catch(e) {{
+                btn.innerText = "複製失敗（瀏覽器限制）";
+                setTimeout(()=>btn.innerText="一鍵複製到剪貼簿", 1500);
+            }}
+        }});
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        _dlg()
-
-    except Exception:
-        # fallback：舊版 streamlit 無 dialog
-        st.session_state["open_dialog"] = False
-        st.warning("你的 Streamlit 版本未支援 dialog。請升級 streamlit。")
+    st.download_button(
+        "下載成文字檔（備用）",
+        data=cir_text.encode("utf-8"),
+        file_name="cir_news.txt",
+        mime="text/plain",
+        use_container_width=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # =====================
-# UI
+# Main UI
 # =====================
+_ensure_state()
+
 st.title("🗞️ Tommy Sir後援會之新聞中心")
 st.caption(f"最後更新（香港時間）：{now_hk().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -466,8 +468,11 @@ if auto:
 
 limit = st.sidebar.slider("每個來源顯示幾多條", 5, 30, 12, 1)
 
-# Action Panel 固定左邊
+# 左邊 action panel
 sidebar_panel()
+
+# 先渲染 Cir 面板（頂部）
+render_cir_panel()
 
 # =====================
 # Sources
@@ -494,7 +499,7 @@ sources = [
 ]
 
 # =====================
-# Render cards (4 columns/row) - 全部用 streamlit 元件
+# Render cards（每行4個）
 # =====================
 cols_per_row = 4
 rows = chunked(sources, cols_per_row)
@@ -511,50 +516,41 @@ for row in rows:
             else:
                 arts, warn = fetch_rss(src["url"], src["name"], src["color"], limit=limit)
 
-            # sort within source
+            # sort per source
             arts = sort_articles_desc(arts)
 
-            # compute NEW flag + build UI
             st.markdown(f"<div class='section-title'>{html.escape(src['name'])}</div>", unsafe_allow_html=True)
-
             st.markdown("<div class='card'><div class='items'>", unsafe_allow_html=True)
 
             if not arts:
                 st.markdown("<div class='empty'>暫無內容</div>", unsafe_allow_html=True)
             else:
-                for a in arts:
+                for idx, a in enumerate(arts):
                     a.is_new = compute_new_flag(a.link, window_minutes=20)
 
-                    # Streamlit checkbox (stateful) – key 必須全局唯一
                     cb_key = f"cb__{a.id}"
-                    # 初始化 selected
-                    _ensure_state()
                     if cb_key not in st.session_state:
                         st.session_state[cb_key] = False
 
-                    # 一行：checkbox + NEW + title link
-                    # 點選 checkbox 即視為已讀 → 取消 NEW
-                    checked = st.checkbox(
-                        label=f"{a.time_str}  {a.title}",
-                        value=st.session_state[cb_key],
-                        key=cb_key,
-                    )
+                    # checkbox label
+                    label = f"{a.time_str}  {a.title}"
+                    checked = st.checkbox(label, value=st.session_state[cb_key], key=cb_key)
 
-                    # 更新 selected state
+                    # update selection state
                     if checked:
                         st.session_state["selected"][a.id] = True
                         if a.id not in st.session_state["selected_order"]:
                             st.session_state["selected_order"].append(a.id)
-                        mark_read(a.link)  # 你「經過取消 NEW」做不到，用「點選即已讀」代替
+                        mark_read(a.link)  # 勾選/互動即視為已讀，取消 NEW
+                        a.is_new = False
                     else:
                         st.session_state["selected"][a.id] = False
-                        # 不強制移除 order，避免抖動；輸出時會忽略 False
 
-                    # NEW badge（用簡單文字顯示，唔再紅色）
+                    # NEW badge（不再用紅色）
                     if a.is_new:
                         st.markdown("<span class='badge-new'>NEW</span>", unsafe_allow_html=True)
 
-                    # 額外提供 clickable link（避免只靠 checkbox label）
+                    # clickable link
                     st.markdown(
                         f"""
                         <div class="itemwrap" style="border-left-color:{a.color}">
@@ -574,8 +570,4 @@ for row in rows:
                 st.markdown(f"<div class='warn'>⚠️ {html.escape(warn)}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-# 把最新文章 cache 住，popup 先搵到內容
 cache_articles(all_articles_flat)
-
-# popup render
-render_dialog_if_needed()
