@@ -377,12 +377,16 @@ sources = [
     # 你提供的 RSSHub routes（注意：Now RSSHub 你話壞咗，所以唔用）
     {"name": "HK01", "type": "rss", "url": f"{rsshub_base}/hk01/latest", "color": "#2563EB"},
     {"name": "on.cc 東網", "type": "rss", "url": f"{rsshub_base}/oncc/zh-hant/news", "color": "#7C3AED"},
+    {"name": "星島即時", "type": "rss", "url": f"https://www.stheadline.com/rss", "color": "#F97316"},
     {"name": "明報即時", "type": "rss", "url": f"https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
-    
-    {"name": "TVB 新聞", "type": "rss", "url": f"{rsshub_base}/tvb/news/tc", "color": "#0EA5E9"},
+    {"name": "i-CABLE 有線", "type": "rss", "url": f"{https://www.i-cable.com/feed", "color": "#A855F7"},
+    {"name": "經濟日報", "type": "rss", "url": f"https://www.hket.com/rss/hongkong", "color": "#7C3AED"},
     {"name": "信報即時", "type": "rss", "url": f"{rsshub_base}/hkej/index", "color": "#64748B"},
-    {"name": "星島即時", "type": "rss", "url": f"{rsshub_base}/stheadline/std/realtime", "color": "#F97316"},
-    {"name": "i-CABLE 有線", "type": "rss", "url": f"{rsshub_base}/icable/all", "color": "#A855F7"},
+    {"name": "巴士的報", "type": "rss", "url": f"https://www.bastillepost.com/hongkong/feed", "color": "#7C3AED"},
+    {"name": "TVB 新聞", "type": "rss", "url": f"{rsshub_base}/tvb/news/tc", "color": "#0EA5E9"},
+
+
+
 ]
 
 # 你可以日後再加（明報官方 RSS 你話「官方 RSS」，你未提供 URL，之後補上即可）
@@ -407,5 +411,6 @@ for row in rows:
             arts = sort_articles_desc(arts)
 
             st.markdown(build_card_html(src["name"], arts, warn=warn), unsafe_allow_html=True)
+
 
 
