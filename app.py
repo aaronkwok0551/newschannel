@@ -8,6 +8,9 @@ import textwrap
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+import requests
+from dateutil import parser as dtparser
+
 import feedparser
 import pytz
 import streamlit as st
@@ -24,7 +27,7 @@ except Exception:
     pass
 
 HK_TZ = pytz.timezone("Asia/Hong_Kong")
-st.set_page_config(page_title="香港新聞聚合中心", layout="wide", page_icon="🗞️")
+st.set_page_config(page_title="Tommy Sir後援會之新聞中心", layout="wide", page_icon="🗞️")
 
 # =====================
 # CSS
@@ -108,6 +111,97 @@ def parse_time(entry) -> Optional[datetime.datetime]:
 
 # =====================
 # Fetchers
+
+NOW_API = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2"
+
+def _safe_get_json(url: str, params: dict, timeout: int = 12) -> dict:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; HKNewsAggregator/1.0)",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://news.now.com/",
+        "Origin": "https://news.now.com",
+    }
+    r = requests.get(url, params=params, headers=headers, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+@st.cache_data(ttl=60)
+def fetch_now_local_today(color: str, limit: int = 10) -> List[Article]:
+    """
+    Now 新聞（本地）：
+    - categoryId=119（你已在 XHR 找到）
+    - 只顯示今日
+    - 有時間顯示 HH:MM，無時間顯示「今日」
+    """
+    today = now_hk().date()
+    out: List[Article] = []
+
+    try:
+        data = _safe_get_json(NOW_API, {"category": 119, "pageNo": 1}, timeout=12)
+
+        # 保守取 list（Now 可能改 key）
+        candidates = None
+        if isinstance(data, dict):
+            for k in ("data", "list", "news", "items", "result"):
+                v = data.get(k)
+                if isinstance(v, list):
+                    candidates = v
+                    break
+            if candidates is None:
+                for v in data.values():
+                    if isinstance(v, dict):
+                        for kk in ("data", "list", "news", "items"):
+                            vv = v.get(kk)
+                            if isinstance(vv, list):
+                                candidates = vv
+                                break
+                    if candidates is not None:
+                        break
+
+        if not candidates:
+            return []
+
+        for it in candidates:
+            if not isinstance(it, dict):
+                continue
+
+            title = clean_text(str(it.get("newsTitle") or it.get("title") or it.get("headline") or ""))
+            link = str(it.get("shareUrl") or it.get("url") or it.get("link") or "")
+
+            if link.startswith("/"):
+                link = "https://news.now.com" + link
+
+            time_str = "今日"
+            dt = None
+            raw_time = it.get("publishDate") or it.get("publishTime") or it.get("publishedAt")
+
+            if raw_time:
+                try:
+                    dt = dtparser.parse(str(raw_time))
+                    if dt.tzinfo is None:
+                        dt = HK_TZ.localize(dt)
+                    dt = dt.astimezone(HK_TZ)
+                    time_str = dt.strftime("%H:%M")
+                except Exception:
+                    dt = None
+                    time_str = "今日"
+
+            # 今日過濾：有 dt 就嚴格比對
+            if dt and dt.date() != today:
+                continue
+
+            if title and link:
+                out.append(Article(title=title, link=link, time_str=time_str, color=color))
+
+            if len(out) >= limit:
+                break
+
+        return out
+
+    except Exception:
+        return []
+
+
 # =====================
 @st.cache_data(ttl=60)
 def fetch_today(url: str, color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
@@ -177,6 +271,7 @@ RSSHUB = "https://rsshub-production-9dfc.up.railway.app"
 GOV_ZH = "https://www.info.gov.hk/gia/rss/general_zh.xml"
 GOV_EN = "https://www.info.gov.hk/gia/rss/general_en.xml"
 RTHK = "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml"
+HK01 = f"{RSSHUB}/hk01/latest"
 
 # =====================
 # 其他新聞媒體（完全照你提供）
@@ -217,8 +312,10 @@ with row1[2]:
     st.markdown(build_card_html("RTHK", arts, warn), unsafe_allow_html=True)
 
 with row1[3]:
-    st.markdown(build_card_html("（預留欄位）", [], "你可日後加入其他核心來源"), unsafe_allow_html=True)
-
+    st.markdown(
+        build_card_html("Now 新聞（本地）", fetch_now_local_today("#3B82F6")),
+        unsafe_allow_html=True,
+    )
 # -------- 第二排開始：其他媒體（5 欄對齊）--------
 st.markdown("---")
 st.subheader("其他新聞媒體")
@@ -228,3 +325,4 @@ for idx, (name, url, color) in enumerate(OTHER_SOURCES):
     with cols[idx % 5]:
         arts, warn = fetch_today(url, color)
         st.markdown(build_card_html(name, arts, warn), unsafe_allow_html=True)
+
