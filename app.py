@@ -377,6 +377,8 @@ sources = [
     # 你提供的 RSSHub routes（注意：Now RSSHub 你話壞咗，所以唔用）
     {"name": "HK01", "type": "rss", "url": f"{rsshub_base}/hk01/latest", "color": "#2563EB"},
     {"name": "on.cc 東網", "type": "rss", "url": f"{rsshub_base}/oncc/zh-hant/news", "color": "#7C3AED"},
+    {"name": "明報即時", "type": "rss", "url": f"https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
+    
     {"name": "TVB 新聞", "type": "rss", "url": f"{rsshub_base}/tvb/news/tc", "color": "#0EA5E9"},
     {"name": "信報即時", "type": "rss", "url": f"{rsshub_base}/hkej/index", "color": "#64748B"},
     {"name": "星島即時", "type": "rss", "url": f"{rsshub_base}/stheadline/std/realtime", "color": "#F97316"},
@@ -405,4 +407,5 @@ for row in rows:
             arts = sort_articles_desc(arts)
 
             st.markdown(build_card_html(src["name"], arts, warn=warn), unsafe_allow_html=True)
+
 
