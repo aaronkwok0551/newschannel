@@ -26,7 +26,7 @@ except Exception:
 
 HK_TZ = pytz.timezone("Asia/Hong_Kong")
 
-st.set_page_config(page_title="香港新聞聚合中心", layout="wide", page_icon="🗞️")
+st.set_page_config(page_title="Tommy Sir後援會之新聞中心", layout="wide", page_icon="🗞️")
 
 # =====================
 # CSS（包含：新新聞 20 分鐘紅色）
@@ -350,7 +350,7 @@ RTHK = "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml"
 # =====================
 # UI
 # =====================
-st.title("🗞️ 香港新聞聚合中心")
+st.title("🗞️ Tommy Sir後援會之新聞中心")
 st.caption(f"最後更新（香港時間）：{now_hk().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # RSSHub base（你話唔知 template name；呢度直接用 URL）
@@ -405,3 +405,4 @@ for row in rows:
             arts = sort_articles_desc(arts)
 
             st.markdown(build_card_html(src["name"], arts, warn=warn), unsafe_allow_html=True)
+
