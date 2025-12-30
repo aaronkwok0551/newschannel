@@ -36,40 +36,46 @@ st.markdown(
         <style>
         body { font-family: "Microsoft JhengHei","PingFang TC",sans-serif; }
 
-        .section-title{ font-size:1.05rem;font-weight:800;margin:2px 0 8px 0; }
+        section[data-testid="stSidebar"] { width: 330px !important; }
+        section[data-testid="stSidebar"] > div { padding-top: 10px; }
 
         .card{
           background:#fff;border:1px solid #e5e7eb;border-radius:12px;
-          padding:10px 12px;height:560px;display:flex;flex-direction:column;
+          padding:12px;height:520px;display:flex;flex-direction:column;
         }
-        .items{ overflow-y:auto; padding-right:6px; flex:1; }
-
-        .badge-new{
+        .card-title{
+          font-size:1.05rem;font-weight:800;margin:2px 0 10px 0;
+        }
+        .items{
+          overflow-y:auto; padding-right:6px; flex:1;
+        }
+        .row{
+          display:flex; gap:10px; align-items:flex-start;
+          padding:8px 6px; margin:6px 0; border-radius:10px;
+          border:1px solid #f1f5f9;
+        }
+        .row:hover{
+          border-color:#cbd5e1;
+          background:#f8fafc;
+        }
+        .meta{
+          font-size:0.78rem;color:#6b7280;font-family:monospace;margin-top:2px;
+        }
+        .new-badge{
           display:inline-block;
-          font-size:0.72rem;
+          font-size:0.70rem;
           font-weight:800;
-          padding:1px 8px;
+          padding:2px 8px;
           border-radius:999px;
-          background:#111827;
-          color:#fff;
+          background:#fee2e2;
+          color:#991b1b;
           margin-left:6px;
+          vertical-align:middle;
         }
-
-        .itemwrap{
-          border-left:4px solid #3b82f6;border-radius:10px;
-          padding:8px 10px;margin:10px 0;background:#fff;
-        }
-        .titleline a{ text-decoration:none;color:#111827;font-weight:650;line-height:1.35; }
-        .titleline a:hover{ color:#2563eb; }
-        .meta{ font-size:0.78rem;color:#6b7280;font-family:monospace;margin-top:2px; }
-
-        .warn{ color:#b45309;font-size:0.85rem;margin:6px 0 0 0; }
         .empty{ color:#9ca3af;text-align:center;margin-top:20px; }
+        .warn{ color:#b45309;font-size:0.85rem;margin:6px 0 0 0; }
 
-        .cirbox{
-          border:1px solid #e5e7eb;border-radius:12px;
-          padding:12px;background:#fff;
-        }
+        textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
         </style>
         """
     ),
@@ -81,84 +87,20 @@ st.markdown(
 # =====================
 @dataclass
 class Article:
-    id: str
     source: str
     title: str
     link: str
-    dt: Optional[datetime.datetime]
+    dt: Optional[datetime.datetime]  # HK time
     time_str: str
     color: str
     is_new: bool = False
-    content: str = ""
 
 # =====================
-# State helpers
+# Helpers
 # =====================
 def now_hk() -> datetime.datetime:
     return datetime.datetime.now(HK_TZ)
 
-def _ensure_state():
-    st.session_state.setdefault("seen_first", {})      # link -> first seen iso
-    st.session_state.setdefault("read_links", set())   # link set (cancel NEW)
-    st.session_state.setdefault("selected", {})        # article_id -> bool
-    st.session_state.setdefault("selected_order", [])  # preserve order
-    st.session_state.setdefault("article_cache", {})   # article_id -> Article
-    st.session_state.setdefault("show_cir_panel", False)
-
-def mark_read(link: str):
-    _ensure_state()
-    if link:
-        st.session_state["read_links"].add(link)
-
-def compute_new_flag(link: str, window_minutes: int = 20) -> bool:
-    _ensure_state()
-    if not link:
-        return False
-
-    now = now_hk()
-    seen_first: Dict[str, str] = st.session_state["seen_first"]
-    read_links: set = st.session_state["read_links"]
-
-    if link in read_links:
-        return False
-
-    if link not in seen_first:
-        seen_first[link] = now.isoformat()
-
-    try:
-        first_seen = dtparser.parse(seen_first[link])
-        if first_seen.tzinfo is None:
-            first_seen = HK_TZ.localize(first_seen)
-        first_seen = first_seen.astimezone(HK_TZ)
-        return (now - first_seen) <= datetime.timedelta(minutes=window_minutes)
-    except Exception:
-        return False
-
-def cache_articles(all_articles: List[Article]):
-    _ensure_state()
-    st.session_state["article_cache"] = {a.id: a for a in all_articles}
-
-def get_selected_articles() -> List[Article]:
-    _ensure_state()
-    cache: Dict[str, Article] = st.session_state["article_cache"]
-    selected: Dict[str, bool] = st.session_state["selected"]
-    order: List[str] = st.session_state["selected_order"]
-
-    out: List[Article] = []
-    for aid in order:
-        if selected.get(aid) and aid in cache:
-            out.append(cache[aid])
-
-    # 補漏
-    for aid, v in selected.items():
-        if v and aid in cache and aid not in order:
-            out.append(cache[aid])
-
-    return out
-
-# =====================
-# Text helpers
-# =====================
 def clean_text(raw: str) -> str:
     raw = html.unescape(raw or "")
     soup = BeautifulSoup(raw, "html.parser")
@@ -183,26 +125,108 @@ def parse_time_from_entry(entry) -> Optional[datetime.datetime]:
                 pass
     return None
 
+def chunked(lst: List, n: int) -> List[List]:
+    return [lst[i : i + n] for i in range(0, len(lst), n)]
+
 def sort_articles_desc(articles: List[Article]) -> List[Article]:
     with_dt = [a for a in articles if a.dt is not None]
     without_dt = [a for a in articles if a.dt is None]
     with_dt.sort(key=lambda x: x.dt, reverse=True)
     return with_dt + without_dt
 
-def chunked(lst: List, n: int) -> List[List]:
-    return [lst[i:i+n] for i in range(0, len(lst), n)]
+def mark_new_by_first_seen(articles: List[Article], window_minutes: int = 20) -> None:
+    if "seen_links" not in st.session_state:
+        st.session_state["seen_links"] = {}
 
-def format_cir_text(articles: List[Article]) -> str:
-    blocks = []
+    seen: Dict[str, str] = st.session_state["seen_links"]
+    now = now_hk()
+    window = datetime.timedelta(minutes=window_minutes)
+
     for a in articles:
-        pub = a.time_str or "—"
-        body = (a.content or "").strip()
-        if body:
-            body = body[:1200]
-        blocks.append(
-            f"{a.source}：{a.title}\n[{pub}]\n\n{body}\n\n{a.link}\n\nEnds"
-        )
-    return "\n\n---\n\n".join(blocks)
+        if not a.link:
+            continue
+        if a.link not in seen:
+            seen[a.link] = now.isoformat()
+
+        try:
+            first_seen = dtparser.parse(seen[a.link])
+            if first_seen.tzinfo is None:
+                first_seen = HK_TZ.localize(first_seen)
+            first_seen = first_seen.astimezone(HK_TZ)
+            a.is_new = (now - first_seen) <= window
+        except Exception:
+            a.is_new = False
+
+    st.session_state["seen_links"] = seen
+
+# =====================
+# Selection state
+# =====================
+def init_selection_state():
+    if "selected" not in st.session_state:
+        st.session_state["selected"] = {}
+    if "all_checkbox_keys" not in st.session_state:
+        st.session_state["all_checkbox_keys"] = set()
+
+def make_item_key(src: str, link: str) -> str:
+    return f"{src}||{link}"
+
+def clear_all_selections():
+    st.session_state["selected"] = {}
+    for k in list(st.session_state.get("all_checkbox_keys", set())):
+        if k in st.session_state:
+            st.session_state[k] = False
+    st.session_state["all_checkbox_keys"] = set()
+
+def build_cir_text() -> str:
+    items = list(st.session_state.get("selected", {}).values())
+    if not items:
+        return ""
+
+    lines: List[str] = []
+    for it in items:
+        lines.append(f"{it['source']}：{it['title']}")
+        lines.append(f"[{it['time']}]")
+        lines.append("")
+        lines.append(it.get("content", "") or "")
+        lines.append("")
+        lines.append(it["url"])
+        lines.append("")
+        lines.append("Ends")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+def copy_button_html(text_to_copy: str, btn_label: str = "一鍵複製") -> str:
+    escaped = html.escape(text_to_copy).replace("\n", "&#10;")
+    return dedent(
+        f"""
+        <div style="margin-top:8px;">
+          <textarea id="__cir_textarea" style="position:absolute; left:-9999px; top:-9999px;">{escaped}</textarea>
+          <button id="__copy_btn"
+            style="
+              padding:8px 12px;border-radius:10px;border:1px solid #cbd5e1;
+              background:white;font-weight:700;cursor:pointer;
+            ">{html.escape(btn_label)}</button>
+          <span id="__copy_msg" style="margin-left:10px;color:#16a34a;font-weight:700;"></span>
+        </div>
+        <script>
+          const btn = document.getElementById("__copy_btn");
+          const ta = document.getElementById("__cir_textarea");
+          const msg = document.getElementById("__copy_msg");
+          btn.addEventListener("click", async () => {{
+            try {{
+              await navigator.clipboard.writeText(ta.value);
+              msg.textContent = "已複製";
+              setTimeout(()=>msg.textContent="", 1200);
+            }} catch(e) {{
+              ta.focus(); ta.select(); document.execCommand("copy");
+              msg.textContent = "已複製";
+              setTimeout(()=>msg.textContent="", 1200);
+            }}
+          }});
+        </script>
+        """
+    ).strip()
 
 # =====================
 # Fetchers
@@ -213,17 +237,21 @@ DEFAULT_HEADERS = {
 }
 
 @st.cache_data(ttl=60)
-def fetch_rss(url: str, source_name: str, color: str, limit: int = 12) -> Tuple[List[Article], Optional[str]]:
+def fetch_rss(source_name: str, url: str, color: str, limit: int = 12) -> Tuple[List[Article], Optional[str]]:
+    """
+    只要能讀到 entries 並成功抽到 title/link，就當成功，不再顯示「div class」類警告。
+    只有真正無 entries / 抽不到有效項才 warn。
+    """
     try:
         r = requests.get(url, timeout=15, headers=DEFAULT_HEADERS)
         r.raise_for_status()
+
         feed = feedparser.parse(r.content)
         if not feed.entries:
             return [], "未有 entries（可能來源暫時無更新／或 RSSHub 路由變更）"
 
         out: List[Article] = []
-        i = 0
-        for e in feed.entries[: (limit * 4)]:
+        for e in feed.entries[: (limit * 3)]:
             title = clean_text(getattr(e, "title", "") or "")
             link = getattr(e, "link", "") or ""
             if not title or not link:
@@ -231,22 +259,7 @@ def fetch_rss(url: str, source_name: str, color: str, limit: int = 12) -> Tuple[
 
             dt = parse_time_from_entry(e)
             time_str = dt.strftime("%H:%M") if dt else "—"
-            summary = clean_text(getattr(e, "summary", "") or getattr(e, "description", "") or "")
-
-            art_id = f"{source_name}-{i}-{abs(hash(link))}"
-            i += 1
-            out.append(
-                Article(
-                    id=art_id,
-                    source=source_name,
-                    title=title,
-                    link=link,
-                    dt=dt,
-                    time_str=time_str,
-                    color=color,
-                    content=summary,
-                )
-            )
+            out.append(Article(source=source_name, title=title, link=link, dt=dt, time_str=time_str, color=color))
             if len(out) >= limit:
                 break
 
@@ -267,8 +280,8 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
     try:
         r = requests.get(NOW_URL, params=params, timeout=15, headers=DEFAULT_HEADERS)
         r.raise_for_status()
-        data = r.json()
 
+        data = r.json()
         candidates = None
         if isinstance(data, list):
             candidates = data
@@ -296,16 +309,14 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
             return [], "Now API 回傳結構已變（找不到新聞列表）"
 
         out: List[Article] = []
-        i = 0
         for it in candidates:
             if not isinstance(it, dict):
                 continue
 
             title = clean_text(str(it.get("title") or it.get("newsTitle") or it.get("headline") or ""))
             news_id = str(it.get("newsId") or "").strip()
-            if not title:
-                continue
 
+            link = ""
             if news_id:
                 link = f"https://news.now.com/home/local/player?newsId={news_id}"
             else:
@@ -322,7 +333,7 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
                     if isinstance(raw_time, (int, float)) or str(raw_time).isdigit():
                         ts = int(raw_time)
                         if ts > 10_000_000_000:
-                            ts = ts // 1000
+                            ts //= 1000
                         dt = datetime.datetime.fromtimestamp(ts, tz=HK_TZ)
                     else:
                         dt = dtparser.parse(str(raw_time))
@@ -331,24 +342,11 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
                         dt = dt.astimezone(HK_TZ)
                     time_str = dt.strftime("%H:%M") if dt else "—"
                 except Exception:
-                    dt, time_str = None, "—"
+                    dt = None
+                    time_str = "—"
 
-            content = clean_text(str(it.get("content") or it.get("newsContent") or it.get("summary") or ""))
-
-            art_id = f"{source_name}-{i}-{abs(hash(link))}"
-            i += 1
-            out.append(
-                Article(
-                    id=art_id,
-                    source=source_name,
-                    title=title,
-                    link=link,
-                    dt=dt,
-                    time_str=time_str,
-                    color=color,
-                    content=content,
-                )
-            )
+            if title and link:
+                out.append(Article(source=source_name, title=title, link=link, dt=dt, time_str=time_str, color=color))
             if len(out) >= limit:
                 break
 
@@ -362,120 +360,54 @@ def fetch_now_api(source_name: str, color: str, limit: int = 12) -> Tuple[List[A
         return [], f"{type(e).__name__}: {e}"
 
 # =====================
-# Sidebar action panel（左邊固定）
+# UI 頭
 # =====================
-def sidebar_panel():
-    _ensure_state()
-
-    st.sidebar.title("Action Panel")
-    st.sidebar.caption("選好新聞後按「要 Cir 嘅新聞」生成內容")
-
-    # 一鍵清除：清 checkbox + 清已選
-    if st.sidebar.button("一鍵取消所有選擇", use_container_width=True):
-        for k in list(st.session_state.keys()):
-            if str(k).startswith("cb__"):
-                st.session_state[k] = False
-        st.session_state["selected"] = {}
-        st.session_state["selected_order"] = []
-        st.session_state["show_cir_panel"] = False
-        st.rerun()
-
-    selected_items = get_selected_articles()
-    st.sidebar.markdown(f"**已選：{len(selected_items)} 條**")
-
-    if selected_items:
-        for a in selected_items[:25]:
-            st.sidebar.write(f"- {a.source}｜{a.time_str}｜{a.title[:25]}…")
-        if len(selected_items) > 25:
-            st.sidebar.caption(f"（仲有 {len(selected_items)-25} 條未顯示）")
-
-    # 生成 Cir 面板（替代 popup）
-    if st.sidebar.button("要 Cir 嘅新聞", use_container_width=True, disabled=(len(selected_items) == 0)):
-        st.session_state["show_cir_panel"] = True
-
-# =====================
-# Cir panel（主畫面右上方出現）
-# =====================
-def render_cir_panel():
-    _ensure_state()
-    if not st.session_state.get("show_cir_panel"):
-        return
-
-    selected_items = get_selected_articles()
-    cir_text = format_cir_text(selected_items)
-
-    st.markdown("<div class='cirbox'>", unsafe_allow_html=True)
-    colA, colB = st.columns([1, 1])
-    with colA:
-        st.subheader("要 Cir 嘅新聞（可複製）")
-    with colB:
-        if st.button("關閉 Cir 面板", use_container_width=True):
-            st.session_state["show_cir_panel"] = False
-            st.rerun()
-
-    st.code(cir_text, language="text")
-
-    # 一鍵複製（JS）
-    st.markdown(
-        f"""
-        <button id="copyBtn" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#111827;color:#fff;font-weight:700;">
-          一鍵複製到剪貼簿
-        </button>
-        <textarea id="copyText" style="position:absolute;left:-9999px;top:-9999px;">{html.escape(cir_text)}</textarea>
-        <script>
-        const btn = document.getElementById("copyBtn");
-        btn.addEventListener("click", async () => {{
-            const t = document.getElementById("copyText").value;
-            try {{
-                await navigator.clipboard.writeText(t);
-                btn.innerText = "已複製 ✅";
-                setTimeout(()=>btn.innerText="一鍵複製到剪貼簿", 1500);
-            }} catch(e) {{
-                btn.innerText = "複製失敗（瀏覽器限制）";
-                setTimeout(()=>btn.innerText="一鍵複製到剪貼簿", 1500);
-            }}
-        }});
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.download_button(
-        "下載成文字檔（備用）",
-        data=cir_text.encode("utf-8"),
-        file_name="cir_news.txt",
-        mime="text/plain",
-        use_container_width=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# =====================
-# Main UI
-# =====================
-_ensure_state()
+init_selection_state()
 
 st.title("🗞️ Tommy Sir後援會之新聞中心")
 st.caption(f"最後更新（香港時間）：{now_hk().strftime('%Y-%m-%d %H:%M:%S')}")
 
-rsshub_base = st.sidebar.text_input(
-    "RSSHub Base URL（例如 https://rsshub-production-xxxx.up.railway.app）",
-    value="https://rsshub-production-9dfc.up.railway.app",
-).rstrip("/")
+# 左側 action panel
+with st.sidebar:
+    st.subheader("Action Panel")
 
-auto = st.toggle("每分鐘自動更新", value=True)
-if auto:
-    st_autorefresh(interval=60_000, key="auto")
+    rsshub_base = st.text_input(
+        "RSSHub Base URL（例如 https://rsshub-production-xxxx.up.railway.app）",
+        value="https://rsshub-production-9dfc.up.railway.app",
+    ).rstrip("/")
 
-limit = st.sidebar.slider("每個來源顯示幾多條", 5, 30, 12, 1)
+    auto = st.toggle("每分鐘自動更新", value=True)
+    if auto:
+        st_autorefresh(interval=60_000, key="auto")
 
-# 左邊 action panel
-sidebar_panel()
+    limit = st.slider("每個來源顯示幾多條", 5, 30, 12, 1)
 
-# 先渲染 Cir 面板（頂部）
-render_cir_panel()
+    st.divider()
+
+    if st.button("一鍵取消所有選擇", use_container_width=True):
+        clear_all_selections()
+        st.rerun()
+
+    selected_count = len(st.session_state.get("selected", {}))
+    disabled = selected_count == 0
+    cir_label = ("🚫 要Cir嘅新聞" if disabled else f"要Cir嘅新聞（{selected_count}）")
+
+    pop = st.popover(cir_label, use_container_width=True, disabled=disabled)
+    with pop:
+        st.markdown("以下內容已按你指定格式生成，可直接複製：")
+        cir_text = build_cir_text()
+        st.text_area("Cir 內容", value=cir_text, height=360, label_visibility="collapsed")
+        st.components.v1.html(copy_button_html(cir_text, "一鍵複製"), height=60)
+        st.download_button(
+            "下載為 txt",
+            data=(cir_text or "").encode("utf-8"),
+            file_name="cir_news.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
 
 # =====================
-# Sources
+# 來源（已移除 TVB）
 # =====================
 GOV_ZH = "https://www.info.gov.hk/gia/rss/general_zh.xml"
 GOV_EN = "https://www.info.gov.hk/gia/rss/general_en.xml"
@@ -485,89 +417,83 @@ sources = [
     {"name": "政府新聞（中文）", "type": "rss", "url": GOV_ZH, "color": "#E74C3C"},
     {"name": "政府新聞（英文）", "type": "rss", "url": GOV_EN, "color": "#C0392B"},
     {"name": "RTHK", "type": "rss", "url": RTHK, "color": "#FF9800"},
-    {"name": "Now（本地）", "type": "now_api", "url": "", "color": "#2563EB"},
-
-    {"name": "HK01", "type": "rss", "url": f"{rsshub_base}/hk01/latest", "color": "#06b6d4"},
+    {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A"},
+    {"name": "HK01", "type": "rss", "url": f"{rsshub_base}/hk01/latest", "color": "#2563EB"},
     {"name": "on.cc 東網", "type": "rss", "url": f"{rsshub_base}/oncc/zh-hant/news", "color": "#7C3AED"},
-    {"name": "星島（Feedly RSS）", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316"},
-    {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#64748B"},
-
+    {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316"},
+    {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
     {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7"},
-    {"name": "經濟日報 HKET", "type": "rss", "url": "https://www.hket.com/rss/hongkong", "color": "#16A34A"},
-    {"name": "信報", "type": "rss", "url": f"{rsshub_base}/hkej/index", "color": "#0EA5E9"},
-    {"name": "巴士的報", "type": "rss", "url": "https://www.bastillepost.com/hongkong/feed", "color": "#f59e0b"},
+    {"name": "經濟日報", "type": "rss", "url": "https://www.hket.com/rss/hongkong", "color": "#7C3AED"},
+    {"name": "信報即時", "type": "rss", "url": f"{rsshub_base}/hkej/index", "color": "#64748B"},
+    {"name": "巴士的報", "type": "rss", "url": "https://www.bastillepost.com/hongkong/feed", "color": "#7C3AED"},
 ]
 
 # =====================
-# Render cards（每行4個）
+# Render：每行 4 欄
 # =====================
 cols_per_row = 4
 rows = chunked(sources, cols_per_row)
 
-all_articles_flat: List[Article] = []
-
 for row in rows:
-    cols = st.columns(len(row))
+    cols = st.columns(len(row), gap="small")
     for col, src in zip(cols, row):
         with col:
-            # fetch
             if src["type"] == "now_api":
                 arts, warn = fetch_now_api(src["name"], src["color"], limit=limit)
             else:
-                arts, warn = fetch_rss(src["url"], src["name"], src["color"], limit=limit)
+                arts, warn = fetch_rss(src["name"], src["url"], src["color"], limit=limit)
 
-            # sort per source
+            mark_new_by_first_seen(arts, window_minutes=20)
             arts = sort_articles_desc(arts)
 
-            st.markdown(f"<div class='section-title'>{html.escape(src['name'])}</div>", unsafe_allow_html=True)
-            st.markdown("<div class='card'><div class='items'>", unsafe_allow_html=True)
+            st.markdown(f"<div class='card'><div class='card-title'>{html.escape(src['name'])}</div>", unsafe_allow_html=True)
+            st.markdown("<div class='items'>", unsafe_allow_html=True)
 
             if not arts:
                 st.markdown("<div class='empty'>暫無內容</div>", unsafe_allow_html=True)
             else:
-                for idx, a in enumerate(arts):
-                    a.is_new = compute_new_flag(a.link, window_minutes=20)
+                for a in arts:
+                    item_key = make_item_key(a.source, a.link)
+                    cb_key = f"cb::{item_key}"
+                    st.session_state["all_checkbox_keys"].add(cb_key)
 
-                    cb_key = f"cb__{a.id}"
                     if cb_key not in st.session_state:
-                        st.session_state[cb_key] = False
+                        st.session_state[cb_key] = (item_key in st.session_state["selected"])
 
-                    # checkbox label
-                    label = f"{a.time_str}  {a.title}"
-                    checked = st.checkbox(label, value=st.session_state[cb_key], key=cb_key)
+                    c1, c2 = st.columns([0.18, 0.82], gap="small")
+                    with c1:
+                        checked = st.checkbox("", key=cb_key)
 
-                    # update selection state
                     if checked:
-                        st.session_state["selected"][a.id] = True
-                        if a.id not in st.session_state["selected_order"]:
-                            st.session_state["selected_order"].append(a.id)
-                        mark_read(a.link)  # 勾選/互動即視為已讀，取消 NEW
-                        a.is_new = False
+                        st.session_state["selected"][item_key] = {
+                            "source": a.source,
+                            "title": a.title,
+                            "time": a.time_str,
+                            "content": "",
+                            "url": a.link,
+                        }
                     else:
-                        st.session_state["selected"][a.id] = False
+                        if item_key in st.session_state["selected"]:
+                            del st.session_state["selected"][item_key]
 
-                    # NEW badge（不再用紅色）
-                    if a.is_new:
-                        st.markdown("<span class='badge-new'>NEW</span>", unsafe_allow_html=True)
-
-                    # clickable link
-                    st.markdown(
-                        f"""
-                        <div class="itemwrap" style="border-left-color:{a.color}">
-                          <div class="titleline">
-                            <a href="{a.link}" target="_blank" rel="noopener noreferrer">{html.escape(a.title)}</a>
-                          </div>
-                          <div class="meta">🕐 {html.escape(a.time_str)}</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-                    all_articles_flat.append(a)
+                    with c2:
+                        new_badge = "<span class='new-badge'>New</span>" if a.is_new else ""
+                        st.markdown(
+                            f"""
+                            <div class="row" style="border-left:4px solid {a.color};">
+                              <div style="flex:1;">
+                                <a href="{html.escape(a.link)}" target="_blank" rel="noopener noreferrer"
+                                   style="text-decoration:none;color:#111827;font-weight:700;line-height:1.35;">
+                                   {html.escape(a.title)}{new_badge}
+                                </a>
+                                <div class="meta">🕐 {html.escape(a.time_str)}</div>
+                              </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
 
             st.markdown("</div>", unsafe_allow_html=True)
             if warn:
                 st.markdown(f"<div class='warn'>⚠️ {html.escape(warn)}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
-
-cache_articles(all_articles_flat)
