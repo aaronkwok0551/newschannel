@@ -11,6 +11,7 @@ from dateutil import parser as dtparser
 from dataclasses import dataclass
 from typing import List, Optional
 from streamlit_autorefresh import st_autorefresh
+import streamlit.components.v1 as components
 
 # =====================
 # 基本設定
@@ -200,4 +201,6 @@ cols = st.columns(4)
 for i, (name, url, color) in enumerate(SOURCES):
     with cols[i % 4]:
         html_block = render_block(name, fetch_today(url, color))
-        st.markdown(html_block, unsafe_allow_html=True)
+        # 估高度：卡 520px + title/外距，先用 600；之後你想再調都得
+components.html(html_block, height=600, scrolling=True)
+
