@@ -27,6 +27,7 @@ except Exception:
     pass
 
 HK_TZ = pytz.timezone("Asia/Hong_Kong")
+st.set_page_config(page_title="香港新聞聚合中心", layout="wide", page_icon="🗞️")
 st.set_page_config(page_title="Tommy Sir後援會之新聞中心", layout="wide", page_icon="🗞️")
 
 # =====================
@@ -126,17 +127,15 @@ def _safe_get_json(url: str, params: dict, timeout: int = 12) -> dict:
     return r.json()
 
 @st.cache_data(ttl=60)
-def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
+def fetch_now_local_today(color: str, limit: int = 10) -> List[Article]:
     """
     Now 新聞（本地）：
-    - categoryId=119
-    - 只顯示今日（香港時間）
-    - 有時間顯示 HH:MM；時間解析失敗則顯示「今日」
-    - 如今日篩選後為 0，但 API 有回傳 → fallback 顯示最新 10（並提示）
+    - categoryId=119（你已在 XHR 找到）
+    - 只顯示今日
+    - 有時間顯示 HH:MM，無時間顯示「今日」
     """
     today = now_hk().date()
-    out_today: List[Article] = []
-    out_latest: List[Article] = []
+    out: List[Article] = []
 
     try:
         data = _safe_get_json(NOW_API, {"category": 119, "pageNo": 1}, timeout=12)
@@ -149,12 +148,10 @@ def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], O
                 if isinstance(v, list):
                     candidates = v
                     break
-
             if candidates is None:
-                # 再掃一層 dict
                 for v in data.values():
                     if isinstance(v, dict):
-                        for kk in ("data", "list", "news", "items", "result"):
+                        for kk in ("data", "list", "news", "items"):
                             vv = v.get(kk)
                             if isinstance(vv, list):
                                 candidates = vv
@@ -163,7 +160,7 @@ def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], O
                         break
 
         if not candidates:
-            return [], "Now API 回傳結構已變（找不到新聞列表）"
+            return []
 
         for it in candidates:
             if not isinstance(it, dict):
@@ -171,13 +168,14 @@ def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], O
 
             title = clean_text(str(it.get("newsTitle") or it.get("title") or it.get("headline") or ""))
             link = str(it.get("shareUrl") or it.get("url") or it.get("link") or "")
+
             if link.startswith("/"):
                 link = "https://news.now.com" + link
 
-            # 時間
             time_str = "今日"
             dt = None
-            raw_time = it.get("publishDate") or it.get("publishTime") or it.get("publishedAt") or it.get("date")
+            raw_time = it.get("publishDate") or it.get("publishTime") or it.get("publishedAt")
+
             if raw_time:
                 try:
                     dt = dtparser.parse(str(raw_time))
@@ -189,28 +187,20 @@ def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], O
                     dt = None
                     time_str = "今日"
 
-            if title and link:
-                art = Article(title=title, link=link, time_str=time_str, color=color)
-                out_latest.append(art)
-                if dt and dt.date() == today:
-                    out_today.append(art)
+            # 今日過濾：有 dt 就嚴格比對
+            if dt and dt.date() != today:
+                continue
 
-            # 先收夠 latest 以備 fallback
-            if len(out_latest) >= limit:
+            if title and link:
+                out.append(Article(title=title, link=link, time_str=time_str, color=color))
+
+            if len(out) >= limit:
                 break
 
-        # 今日有就用今日
-        if out_today:
-            return out_today[:limit], None
+        return out
 
-        # 今日冇，但 latest 有 → fallback
-        if out_latest:
-            return out_latest[:limit], "未能篩出『今日』新聞，已改為顯示最新 10 條（請確認 API 時間欄位格式）"
-
-        return [], "Now API 有回傳但未能解析到有效新聞項目"
-
-    except Exception as e:
-        return [], f"Now API 讀取失敗：{type(e).__name__}: {e}"
+    except Exception:
+        return []
 
 
 # =====================
@@ -323,8 +313,11 @@ with row1[2]:
     st.markdown(build_card_html("RTHK", arts, warn), unsafe_allow_html=True)
 
 with row1[3]:
-arts, warn = fetch_now_local_today("#3B82F6")
-st.markdown(build_card_html("Now 新聞（本地）", arts, warn), unsafe_allow_html=True)
+    st.markdown(build_card_html("（預留欄位）", [], "你可日後加入其他核心來源"), unsafe_allow_html=True)
+
+    st.markdown(
+        build_card_html("Now 新聞（本地）", fetch_now_local_today("#3B82F6")),
+        unsafe_allow_html=True,
     )
 # -------- 第二排開始：其他媒體（5 欄對齊）--------
 st.markdown("---")
@@ -335,5 +328,3 @@ for idx, (name, url, color) in enumerate(OTHER_SOURCES):
     with cols[idx % 5]:
         arts, warn = fetch_today(url, color)
         st.markdown(build_card_html(name, arts, warn), unsafe_allow_html=True)
-
-
