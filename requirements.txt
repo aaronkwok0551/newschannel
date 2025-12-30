@@ -5,3 +5,7 @@ beautifulsoup4
 python-dateutil
 streamlit-autorefresh
 requests
+datetime
+html
+sys
+detent
