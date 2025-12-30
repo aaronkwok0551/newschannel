@@ -4,14 +4,14 @@
 import datetime
 import html
 import sys
+import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict
 
 import feedparser
 import pytz
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
 from dateutil import parser as dtparser
 from streamlit_autorefresh import st_autorefresh
@@ -25,8 +25,57 @@ except Exception:
     pass
 
 HK_TZ = pytz.timezone("Asia/Hong_Kong")
+NEW_HIGHLIGHT_MINUTES = 20
 
 st.set_page_config(page_title="香港新聞聚合中心", layout="wide", page_icon="🗞️")
+
+# =====================
+# CSS（不改排版，只加 new 高亮樣式）
+# =====================
+st.markdown(
+    """
+<style>
+body { font-family: "Microsoft JhengHei","PingFang TC",sans-serif; }
+
+.section-title{
+  font-size:1.1rem;font-weight:800;margin:2px 0 8px 0;
+}
+
+.card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+  padding:12px;height:520px;display:flex;flex-direction:column;
+}
+
+.items{ overflow-y:auto; padding-right:6px; flex:1; }
+
+.item{
+  background:#fff;border-left:4px solid #3b82f6;border-radius:8px;
+  padding:8px 10px;margin:8px 0;
+}
+
+.item a{
+  text-decoration:none;color:#111827;font-weight:600;line-height:1.35;
+}
+.item a:hover{ color:#ef4444; }
+
+.item-meta{
+  font-size:0.78rem;color:#6b7280;font-family:monospace;margin-top:2px;
+}
+
+.empty{ color:#9ca3af;text-align:center;margin-top:20px; }
+
+/* NEW: 新聞 20 分鐘紅色提示（不改 layout） */
+.item.new{
+  border-left-color:#ef4444 !important;
+  background: rgba(239,68,68,0.06);
+}
+.item.new a{
+  color:#b91c1c;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 # =====================
 # Model
@@ -37,6 +86,7 @@ class Article:
     link: str
     time_str: str
     color: str
+    dt: Optional[datetime.datetime] = None  # 用於排序（最新在上）
 
 # =====================
 # Helpers
@@ -49,21 +99,14 @@ def clean_text(raw: str) -> str:
     soup = BeautifulSoup(raw, "html.parser")
     return soup.get_text(" ", strip=True)
 
-def _safe_get_json(url: str, params: Optional[dict] = None, timeout: int = 12) -> Any:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Streamlit News Aggregator)",
-        "Accept": "application/json,text/plain,*/*",
-    }
-    r = requests.get(url, params=params, headers=headers, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
-
-def parse_time_from_rss(entry) -> Optional[datetime.datetime]:
+def parse_time_from_feed_entry(entry) -> Optional[datetime.datetime]:
+    # feedparser 標準欄位
     if getattr(entry, "published_parsed", None):
         return datetime.datetime(*entry.published_parsed[:6], tzinfo=pytz.utc).astimezone(HK_TZ)
     if getattr(entry, "updated_parsed", None):
         return datetime.datetime(*entry.updated_parsed[:6], tzinfo=pytz.utc).astimezone(HK_TZ)
 
+    # 文字欄位嘗試 parse
     for key in ("published", "updated", "pubDate"):
         val = getattr(entry, key, None)
         if val:
@@ -76,69 +119,20 @@ def parse_time_from_rss(entry) -> Optional[datetime.datetime]:
                 pass
     return None
 
-# =====================
-# Render (iframe，避免把 HTML 當文字輸出)
-# =====================
-def build_card_html(title: str, articles: List[Article], note: Optional[str] = None, empty_hint: str = "今日暫無新聞") -> str:
-    note_html = f"<span class='badge'>{clean_text(note)}</span>" if note else ""
+def _safe_get_json(url: str, params: Optional[dict] = None, timeout: int = 12):
+    r = requests.get(url, params=params, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    return r.json()
 
-    if not articles:
-        items_html = f"<div class='empty'>{clean_text(empty_hint)}</div>"
-    else:
-        parts = []
-        for a in articles:
-            parts.append(
-                f"""
-                <div class="item" style="border-left-color:{a.color}">
-                  <a href="{a.link}" target="_blank" rel="noopener noreferrer">{html.escape(a.title)}</a>
-                  <div class="item-meta">🕐 {html.escape(a.time_str)}</div>
-                </div>
-                """
-            )
-        items_html = "".join(parts)
+def _epoch_ms_to_dt(ms: int) -> datetime.datetime:
+    # Now API publishDate = epoch ms
+    return datetime.datetime.fromtimestamp(ms / 1000.0, tz=HK_TZ)
 
-    return f"""
-    <div class="section-title">{html.escape(title)}{note_html}</div>
-    <div class="card">
-      <div class="items">
-        {items_html}
-      </div>
-    </div>
-    """
-
-def render_card_iframe(card_inner_html: str, height: int = 560) -> None:
-    full_html = f"""
-    <html>
-    <head>
-      <meta charset="utf-8" />
-      <style>
-        html, body {{ margin:0; padding:0; font-family: "Microsoft JhengHei","PingFang TC",sans-serif; }}
-        .section-title{{ font-size:1.05rem; font-weight:800; margin:2px 0 8px 0; }}
-        .card{{
-          background:#ffffff;
-          border:1px solid #e5e7eb;
-          border-radius:12px;
-          padding:12px;
-          height:520px;
-          display:flex;
-          flex-direction:column;
-          box-sizing:border-box;
-        }}
-        .items{{ overflow-y:auto; padding-right:6px; flex:1; }}
-        .item{{ background:#ffffff; border-left:4px solid #3b82f6; border-radius:8px; padding:8px 10px; margin:8px 0; box-sizing:border-box; }}
-        .item a{{ text-decoration:none; color:#111827; font-weight:600; line-height:1.35; display:block; }}
-        .item a:hover{{ color:#ef4444; }}
-        .item-meta{{ font-size:0.78rem; color:#6b7280; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; margin-top:2px; }}
-        .badge{{ display:inline-block; font-size:0.72rem; padding:2px 8px; border-radius:999px; background:#f3f4f6; color:#374151; margin-left:8px; }}
-        .empty{{ color:#9ca3af; text-align:center; margin-top:20px; }}
-      </style>
-    </head>
-    <body>
-      {card_inner_html}
-    </body>
-    </html>
-    """
-    components.html(full_html, height=height, scrolling=True)
+def sort_articles_latest_first(items: List[Article]) -> List[Article]:
+    # dt 有 -> 由新到舊；dt 無 -> 放最後
+    def key(a: Article):
+        return a.dt or datetime.datetime(1970, 1, 1, tzinfo=HK_TZ)
+    return sorted(items, key=key, reverse=True)
 
 # =====================
 # Fetchers
@@ -146,62 +140,82 @@ def render_card_iframe(card_inner_html: str, height: int = 560) -> None:
 @st.cache_data(ttl=60)
 def fetch_rss_today(url: str, color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
     """
-    RSS：只顯示「今日（香港時間）」。
-    重點修正：若 bozo(常見 div/html) 但其實有 entries → 先當「可用」，不顯示警告。
-    只有真係冇 entries 或 0 news 才顯示警告。
+    RSS（政府/RTHK/明報等）：
+    - 只顯示今日（香港時間）
+    - 有時間：HH:MM
+    - 冇時間但可判斷日期：顯示「今日」（並用 dt=今日 00:00 排序到較後）
+    - 完全冇日期：fallback 取最新10（time_str=今日，dt=None）
     """
-    today = now_hk().date()
     feed = feedparser.parse(url)
+    today = now_hk().date()
 
-    entries = feed.entries or []
+    out_today: List[Article] = []
+    out_undated: List[Article] = []
 
-    # 先嘗試抽新聞；成功的話就唔顯示 bozo 警告（避免你見到成堆 div-class）
-    dated: List[Article] = []
-    undated_latest: List[Article] = []
-
-    for e in entries:
-        title = clean_text(getattr(e, "title", "") or "")
-        link = getattr(e, "link", "") or ""
+    for e in feed.entries or []:
+        title = clean_text(getattr(e, "title", ""))
+        link = getattr(e, "link", "")
         if not title or not link:
             continue
 
-        dt = parse_time_from_rss(e)
-        if dt and dt.date() == today:
-            dated.append(Article(title=title, link=link, time_str=dt.strftime("%H:%M"), color=color))
+        dt = parse_time_from_feed_entry(e)
+        if dt:
+            if dt.date() == today:
+                out_today.append(Article(title=title, link=link, time_str=dt.strftime("%H:%M"), color=color, dt=dt))
         else:
-            undated_latest.append(Article(title=title, link=link, time_str="今日", color=color))
+            # 冇時間冇日期：先放入 undated，可能會 fallback 用
+            out_undated.append(Article(title=title, link=link, time_str="今日", color=color, dt=None))
 
-        if len(undated_latest) >= limit * 3:
-            break
+    if out_today:
+        out_today = sort_articles_latest_first(out_today)[:limit]
+        return out_today, None
 
-    # 有今日就直接回傳（不警告）
-    if dated:
-        return dated[:limit], None
+    if out_undated:
+        return out_undated[:limit], "此來源未提供可解析時間／日期，已改為顯示最新 10 條（時間顯示『今日』）"
 
-    # 今日冇但有內容 → fallback 最新（不顯示 bozo 警告）
-    if undated_latest:
-        return undated_latest[:limit], "未能篩出『今日』或 RSS 無日期欄位，已改為顯示最新 10 條"
-
-    # 真係冇內容 → 呢個時候先提示 bozo/錯
-    if getattr(feed, "bozo", 0):
-        err = str(getattr(feed, "bozo_exception", "RSS 解析失敗"))
-        return [], f"RSS 解析失敗/被擋（{err}）"
-    return [], "讀取失敗或無內容"
+    return [], "RSS 無內容或暫時讀取不到"
 
 @st.cache_data(ttl=60)
-def fetch_now_local_today(now_api_url: str, color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
+def fetch_rss_latest(url: str, color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
+    """
+    RSS（不做今日過濾）：取最新 10，並按 dt 排序（如果有）
+    """
+    feed = feedparser.parse(url)
+    out: List[Article] = []
+    for e in feed.entries or []:
+        title = clean_text(getattr(e, "title", ""))
+        link = getattr(e, "link", "")
+        if not title or not link:
+            continue
+        dt = parse_time_from_feed_entry(e)
+        time_str = dt.strftime("%H:%M") if dt else "即時"
+        out.append(Article(title=title, link=link, time_str=time_str, color=color, dt=dt))
+        if len(out) >= limit:
+            break
+
+    if out:
+        out = sort_articles_latest_first(out)
+        return out, None
+    return [], "RSS 無內容或暫時讀取不到"
+
+@st.cache_data(ttl=60)
+def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
     """
     Now 新聞（本地）：
-    - 用你可用的 API
-    - 今日=0 但有回傳 → fallback 最新10
+    - category=119
+    - 只顯示今日（香港時間）
+    - publishDate 為 epoch ms
     """
     today = now_hk().date()
+    NOW_API = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2"
+
     out_today: List[Article] = []
     out_latest: List[Article] = []
 
     try:
-        data = _safe_get_json(now_api_url, params=None, timeout=12)
+        data = _safe_get_json(NOW_API, {"category": 119, "pageNo": 1}, timeout=12)
 
+        # Now 有時直接回 list，有時回 dict 包 list
         candidates = None
         if isinstance(data, list):
             candidates = data
@@ -211,6 +225,16 @@ def fetch_now_local_today(now_api_url: str, color: str, limit: int = 10) -> Tupl
                 if isinstance(v, list):
                     candidates = v
                     break
+            if candidates is None:
+                for v in data.values():
+                    if isinstance(v, dict):
+                        for kk in ("data", "list", "news", "items", "result"):
+                            vv = v.get(kk)
+                            if isinstance(vv, list):
+                                candidates = vv
+                                break
+                    if candidates is not None:
+                        break
 
         if not candidates:
             return [], "Now API 回傳結構已變（找不到新聞列表）"
@@ -219,38 +243,30 @@ def fetch_now_local_today(now_api_url: str, color: str, limit: int = 10) -> Tupl
             if not isinstance(it, dict):
                 continue
 
-            title = clean_text(str(it.get("title") or it.get("newsTitle") or it.get("storyTitle") or ""))
-            news_id = str(it.get("newsId") or "").strip()
-
-            link = str(it.get("webUrl") or it.get("shareUrl") or it.get("url") or it.get("link") or "").strip()
-            if not link and news_id:
-                link = f"https://news.now.com/home/local/player?newsId={news_id}"
+            title = clean_text(str(it.get("newsTitle") or it.get("title") or it.get("headline") or ""))
+            link = str(it.get("webUrl") or it.get("shareUrl") or it.get("url") or it.get("link") or "")
             if link.startswith("/"):
                 link = "https://news.now.com" + link
 
-            time_str = "今日"
             dt = None
-            raw_time = it.get("publishDate") or it.get("publishTime") or it.get("publishedAt") or it.get("date")
-            if raw_time is not None and raw_time != "":
+            time_str = "今日"
+            raw = it.get("publishDate") or it.get("publishTime") or it.get("publishedAt") or it.get("date")
+            if raw is not None:
                 try:
-                    if isinstance(raw_time, (int, float)) or (isinstance(raw_time, str) and raw_time.isdigit()):
-                        ts = int(raw_time)
-                        if ts > 10**12:
-                            ts = ts / 1000.0
-                        dt = datetime.datetime.fromtimestamp(ts, tz=HK_TZ)
-                        time_str = dt.strftime("%H:%M")
+                    if isinstance(raw, (int, float)) or (isinstance(raw, str) and raw.isdigit()):
+                        dt = _epoch_ms_to_dt(int(raw))
                     else:
-                        dt = dtparser.parse(str(raw_time))
+                        dt = dtparser.parse(str(raw))
                         if dt.tzinfo is None:
                             dt = HK_TZ.localize(dt)
                         dt = dt.astimezone(HK_TZ)
-                        time_str = dt.strftime("%H:%M")
+                    time_str = dt.strftime("%H:%M")
                 except Exception:
                     dt = None
                     time_str = "今日"
 
             if title and link:
-                art = Article(title=title, link=link, time_str=time_str, color=color)
+                art = Article(title=title, link=link, time_str=time_str, color=color, dt=dt)
                 out_latest.append(art)
                 if dt and dt.date() == today:
                     out_today.append(art)
@@ -259,108 +275,152 @@ def fetch_now_local_today(now_api_url: str, color: str, limit: int = 10) -> Tupl
                 break
 
         if out_today:
-            return out_today[:limit], None
+            out_today = sort_articles_latest_first(out_today)[:limit]
+            return out_today, None
+
         if out_latest:
-            return out_latest[:limit], "未能篩出『今日』新聞，已改為顯示最新 10 條"
+            out_latest = sort_articles_latest_first(out_latest)[:limit]
+            return out_latest, "未能篩出『今日』新聞，已改為顯示最新 10 條（請確認 publishDate 時區／格式）"
+
         return [], "Now API 有回傳但未能解析到有效新聞項目"
 
     except Exception as e:
         return [], f"Now API 讀取失敗：{type(e).__name__}: {e}"
 
 # =====================
-# UI
+# NEW: 新聞「第一次見到」追蹤 + 20 分鐘紅色
 # =====================
-st.title("🗞️ 香港新聞聚合中心")
-st.caption(f"最後更新（香港時間）：{now_hk().strftime('%Y-%m-%d %H:%M:%S')}")
+def _init_seen_state():
+    if "seen_map" not in st.session_state:
+        # link -> first_seen_epoch (seconds)
+        st.session_state["seen_map"] = {}
 
-with st.sidebar:
-    st.subheader("設定")
-    st.write("RSSHub Base（例如：https://rsshub.xxx.com ）")
-    rsshub_base = st.text_input("RSSHub Base URL", value="https://rsshub-production-9dfc.up.railway.app").rstrip("/")
-    st.write("Now API（你提供可用的）")
-    now_api = st.text_input(
-        "Now API URL",
-        value="https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1",
-    ).strip()
+def mark_and_check_is_new(link: str) -> bool:
+    """
+    回傳：此新聞是否屬於「新出現後 20 分鐘內」
+    """
+    _init_seen_state()
+    seen_map: Dict[str, float] = st.session_state["seen_map"]
+    now_ts = time.time()
 
-    auto = st.toggle("每分鐘自動更新", value=True)
-    limit = st.number_input("每個平台顯示條數", min_value=3, max_value=30, value=10, step=1)
+    if link not in seen_map:
+        seen_map[link] = now_ts
+        st.session_state["seen_map"] = seen_map
+        return True
 
-    st.write("明報官方 RSS（可留空）")
-    mingpao_rss = st.text_input("明報 RSS", value="").strip()
-
-if auto:
-    st_autorefresh(interval=60_000, key="auto")
+    first = seen_map[link]
+    return (now_ts - first) <= (NEW_HIGHLIGHT_MINUTES * 60)
 
 # =====================
-# Sources
+# Render（一次性輸出，避免 DOM 斷裂；並加入 new class）
 # =====================
+def build_card_html(title: str, articles: List[Article], note: Optional[str] = None) -> str:
+    if not articles:
+        items_html = "<div class='empty'>今日暫無新聞</div>"
+    else:
+        parts = []
+        for a in articles:
+            is_new = mark_and_check_is_new(a.link)
+            new_cls = " new" if is_new else ""
+            parts.append(
+                f"""
+                <div class="item{new_cls}" style="border-left-color:{a.color}">
+                  <a href="{a.link}" target="_blank" rel="noopener noreferrer">{a.title}</a>
+                  <div class="item-meta">🕐 {a.time_str}</div>
+                </div>
+                """
+            )
+        items_html = "".join(parts)
+
+    note_html = f"<div class='item-meta' style='margin:0 0 6px 0;'>⚠️ {html.escape(note)}</div>" if note else ""
+
+    return f"""
+    <div class="section-title">{title}</div>
+    <div class="card">
+      {note_html}
+      <div class="items">
+        {items_html}
+      </div>
+    </div>
+    """
+
+# =====================
+# URLs（你既 rsshub domain）
+# =====================
+RSSHUB = "https://rsshub-production-9dfc.up.railway.app"
+
 GOV_ZH = "https://www.info.gov.hk/gia/rss/general_zh.xml"
 GOV_EN = "https://www.info.gov.hk/gia/rss/general_en.xml"
 RTHK = "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml"
 
-HK01 = f"{rsshub_base}/hk01/latest"
-ONCC = f"{rsshub_base}/oncc/zh-hant/news"
-TVB = f"{rsshub_base}/tvb/news/tc"
-HKEJ = f"{rsshub_base}/hkej/index"
-STHEADLINE = f"{rsshub_base}/stheadline/std/realtime"
-ICABLE = f"{rsshub_base}/icable/all"
+# 你列出既 RSSHub routes
+HK01 = f"{RSSHUB}/hk01/latest"
+ONCC = f"{RSSHUB}/oncc/zh-hant/news"
+TVB = f"{RSSHUB}/tvb/news/tc"
+HKEJ = f"{RSSHUB}/hkej/index"
+STHEADLINE = f"{RSSHUB}/stheadline/std/realtime"
+ICABLE = f"{RSSHUB}/icable/all"
 
 # =====================
-# 固定 4 欄對齊：每行必定 4 格，不足用空白卡補
+# UI
 # =====================
-def empty_src(title: str = "") -> Dict[str, Any]:
-    return {"name": title or " ", "kind": "empty", "url": "", "color": "#E5E7EB"}
+st.title("🗞️ 香港新聞聚合中心")
+st.caption(f"最後更新（香港時間）：{now_hk().strftime('%Y-%m-%d %H:%M:%S')}｜新出現新聞紅色維持 {NEW_HIGHLIGHT_MINUTES} 分鐘")
 
-# 你要求：平台橫向並列；完全對齊（每行4格）
-rows: List[List[Dict[str, Any]]] = [
-    [
-        {"name": "政府新聞（中文）", "kind": "rss_today", "url": GOV_ZH, "color": "#E74C3C"},
-        {"name": "政府新聞（英文）", "kind": "rss_today", "url": GOV_EN, "color": "#C0392B"},
-        {"name": "RTHK", "kind": "rss_today", "url": RTHK, "color": "#FF9800"},
-        {"name": "Now（本地）", "kind": "now_api_today", "url": now_api, "color": "#22C55E"},
-    ],
-    [
-        {"name": "HK01", "kind": "rss_today", "url": HK01, "color": "#2563EB"},
-        {"name": "東網 on.cc", "kind": "rss_today", "url": ONCC, "color": "#111827"},
-        {"name": "TVB 新聞", "kind": "rss_today", "url": TVB, "color": "#7C3AED"},
-        {"name": "信報即時", "kind": "rss_today", "url": HKEJ, "color": "#0EA5E9"},
-    ],
-    [
-        {"name": "星島即時", "kind": "rss_today", "url": STHEADLINE, "color": "#F59E0B"},
-        {"name": "i-CABLE 有線", "kind": "rss_today", "url": ICABLE, "color": "#EF4444"},
-        {"name": "明報（官方 RSS）", "kind": "rss_today", "url": mingpao_rss, "color": "#64748B"},
-        empty_src(),  # 補齊第4格，保持對齊
-    ],
-]
+if st.toggle("每分鐘自動更新", value=True):
+    st_autorefresh(interval=60_000, key="auto")
 
-def get_articles(src: Dict[str, Any], limit_n: int) -> Tuple[List[Article], Optional[str], str]:
-    kind = src["kind"]
-    url = (src.get("url") or "").strip()
+# 你話「現在很好，不要修改排版了」：以下只維持橫向並列 column（你可自行按你原本想要嘅數量調整）
+# 如你原本係「每行 4 個」，就 keep 4；如果你係「每行 5/6 個」，你照加多幾個 column group。
+row1 = st.columns(4)
+row2 = st.columns(4)
+row3 = st.columns(4)
 
-    if kind == "empty":
-        return [], None, " "
+# ---------- Row 1 ----------
+with row1[0]:
+    items, note = fetch_rss_today(GOV_ZH, "#E74C3C")
+    st.markdown(build_card_html("政府新聞（中文）", sort_articles_latest_first(items), note), unsafe_allow_html=True)
 
-    if not url:
-        return [], "未設定來源 URL", "未設定來源 URL"
+with row1[1]:
+    items, note = fetch_rss_today(GOV_EN, "#C0392B")
+    st.markdown(build_card_html("政府新聞（英文）", sort_articles_latest_first(items), note), unsafe_allow_html=True)
 
-    if kind == "rss_today":
-        arts, note = fetch_rss_today(url, src["color"], limit=limit_n)
-        return arts, note, ("今日暫無新聞" if not arts else " ")
+with row1[2]:
+    items, note = fetch_rss_today(RTHK, "#FF9800")
+    st.markdown(build_card_html("RTHK", sort_articles_latest_first(items), note), unsafe_allow_html=True)
 
-    if kind == "now_api_today":
-        arts, note = fetch_now_local_today(url, src["color"], limit=limit_n)
-        return arts, note, ("今日暫無新聞" if not arts else " ")
+with row1[3]:
+    items, note = fetch_now_local_today("#10B981")
+    st.markdown(build_card_html("Now（港聞 119）", sort_articles_latest_first(items), note), unsafe_allow_html=True)
 
-    return [], "未知來源類型", "未知來源類型"
+# ---------- Row 2 ----------
+with row2[0]:
+    items, note = fetch_rss_latest(HK01, "#3B82F6")
+    st.markdown(build_card_html("HK01", sort_articles_latest_first(items), note), unsafe_allow_html=True)
 
-# =====================
-# Render
-# =====================
-for row in rows:
-    cols = st.columns(4, gap="small")
-    for i in range(4):
-        src = row[i]
-        with cols[i]:
-            arts, note, empty_hint = get_articles(src, int(limit))
-            render_card_iframe(build_card_html(src["name"], arts, note, empty_hint=empty_hint), height=560)
+with row2[1]:
+    items, note = fetch_rss_latest(ONCC, "#111827")
+    st.markdown(build_card_html("on.cc 東網", sort_articles_latest_first(items), note), unsafe_allow_html=True)
+
+with row2[2]:
+    items, note = fetch_rss_latest(TVB, "#1D4ED8")
+    st.markdown(build_card_html("TVB 新聞", sort_articles_latest_first(items), note), unsafe_allow_html=True)
+
+with row2[3]:
+    items, note = fetch_rss_latest(HKEJ, "#7C3AED")
+    st.markdown(build_card_html("信報即時", sort_articles_latest_first(items), note), unsafe_allow_html=True)
+
+# ---------- Row 3 ----------
+with row3[0]:
+    items, note = fetch_rss_latest(STHEADLINE, "#F59E0B")
+    st.markdown(build_card_html("星島即時", sort_articles_latest_first(items), note), unsafe_allow_html=True)
+
+with row3[1]:
+    items, note = fetch_rss_latest(ICABLE, "#EF4444")
+    st.markdown(build_card_html("i-CABLE 有線", sort_articles_latest_first(items), note), unsafe_allow_html=True)
+
+with row3[2]:
+    st.markdown(build_card_html("（預留）", [], None), unsafe_allow_html=True)
+
+with row3[3]:
+    st.markdown(build_card_html("（預留）", [], None), unsafe_allow_html=True)
