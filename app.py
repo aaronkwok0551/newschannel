@@ -3,8 +3,8 @@
 
 import datetime
 import html
-import re
 import sys
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -30,7 +30,7 @@ NEW_HIGHLIGHT_MINUTES = 20
 st.set_page_config(page_title="香港新聞聚合中心", layout="wide", page_icon="🗞️")
 
 # =====================
-# CSS（你要的「橫向並列」卡片 + 新聞新出現紅色）
+# CSS（保持你要的「橫向並列」卡片 + 新聞新出現紅色）
 # =====================
 st.markdown(
     """
@@ -87,7 +87,6 @@ class Article:
     time_str: str
     color: str
     dt: Optional[datetime.datetime] = None
-    # 用 session_state 判斷「新出現」：第一次見到的時間
     first_seen: Optional[datetime.datetime] = None
 
 
@@ -104,13 +103,26 @@ def clean_text(raw: str) -> str:
     return soup.get_text(" ", strip=True)
 
 
-def _looks_like_html(content: bytes) -> bool:
-    head = content[:800].lstrip().lower()
-    return head.startswith(b"<!doctype html") or head.startswith(b"<html") or b"<div" in head
+def _is_html_response(content_type: str, content: bytes) -> bool:
+    """
+    更可靠：優先用 Content-Type 判斷是否 text/html。
+    同時做少量 body 開頭判斷作保險。
+    """
+    ct = (content_type or "").lower()
+    if "text/html" in ct:
+        return True
+    head = content[:400].lstrip().lower()
+    if head.startswith(b"<!doctype html") or head.startswith(b"<html"):
+        return True
+    return False
 
 
 def _fetch_bytes(url: str, timeout: int = 12) -> Tuple[Optional[bytes], Optional[str]]:
-    """用 requests 抓內容，避免 feedparser 直接吃到 HTML（div class）"""
+    """
+    用 requests 抓 RSS/XML。避免「div class」誤判：
+    - 不再因為內容出現 <div> 就當 HTML
+    - 改用 Content-Type + 開頭判斷
+    """
     try:
         r = requests.get(
             url,
@@ -118,26 +130,16 @@ def _fetch_bytes(url: str, timeout: int = 12) -> Tuple[Optional[bytes], Optional
             headers={
                 "User-Agent": "Mozilla/5.0",
                 "Accept": "application/rss+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
+                "Accept-Language": "zh-HK,zh-TW;q=0.9,zh;q=0.8,en;q=0.5",
             },
         )
         r.raise_for_status()
         content = r.content or b""
-        if _looks_like_html(content):
-            return None, "回傳的是 HTML（div class）— 可能被擋／RSSHub 路由失效／站點改版"
+        if _is_html_response(r.headers.get("Content-Type", ""), content):
+            return None, "回傳的是 HTML（可能被擋／RSSHub 路由失效／站點改版）"
         return content, None
     except Exception as e:
         return None, f"讀取失敗：{type(e).__name__}: {e}"
-
-
-def _safe_get_json(url: str, params: Optional[dict] = None, timeout: int = 12):
-    r = requests.get(
-        url,
-        params=params,
-        timeout=timeout,
-        headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json,*/*;q=0.8"},
-    )
-    r.raise_for_status()
-    return r.json()
 
 
 def _epoch_ms_to_dt(ms: int) -> datetime.datetime:
@@ -165,16 +167,12 @@ def parse_time_from_feed_entry(entry) -> Optional[datetime.datetime]:
 
 def _ensure_seen_key():
     if "seen_map" not in st.session_state:
-        st.session_state["seen_map"] = {}  # type: ignore
+        st.session_state["seen_map"] = {}
 
 
 def mark_and_flag_new(source_key: str, articles: List[Article]) -> List[Article]:
-    """
-    - 記錄每條新聞首次見到時間
-    - 新聞「新出現」維持 20 分鐘：顯示紅色邊（new-item）
-    """
     _ensure_seen_key()
-    seen_map: Dict[str, str] = st.session_state["seen_map"]  # type: ignore
+    seen_map: Dict[str, str] = st.session_state["seen_map"]
     now = now_hk()
 
     for a in articles:
@@ -187,14 +185,10 @@ def mark_and_flag_new(source_key: str, articles: List[Article]) -> List[Article]
                 a.first_seen = dtparser.parse(seen_map[k]).astimezone(HK_TZ)
             except Exception:
                 a.first_seen = now
-
     return articles
 
 
 def sort_latest_first(articles: List[Article]) -> List[Article]:
-    """
-    先按 dt（有就用），無 dt 就用 first_seen，再無就放後面。
-    """
     def key(a: Article):
         if a.dt:
             return a.dt
@@ -209,6 +203,35 @@ def is_new(a: Article) -> bool:
     if not a.first_seen:
         return False
     return (now_hk() - a.first_seen) <= datetime.timedelta(minutes=NEW_HIGHLIGHT_MINUTES)
+
+
+# =====================
+# Now JSON with retry
+# =====================
+def _safe_get_json_with_retry(url: str, params: Optional[dict] = None, timeout: int = 12, retries: int = 3, sleep_s: float = 0.8):
+    last_err = None
+    for i in range(retries):
+        try:
+            r = requests.get(
+                url,
+                params=params,
+                timeout=timeout,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,*/*;q=0.8",
+                    "Accept-Language": "zh-HK,zh-TW;q=0.9,zh;q=0.8,en;q=0.5",
+                    "Referer": "https://news.now.com/",
+                    "Origin": "https://news.now.com",
+                },
+            )
+            # 即使 500 都要 raise，走 retry
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            last_err = e
+            # 500/502/503 常見短暫，等一下再試
+            time.sleep(sleep_s * (i + 1))
+    raise last_err
 
 
 # =====================
@@ -246,10 +269,8 @@ def fetch_rss_today(url: str, color: str, limit: int = 10) -> Tuple[List[Article
 
     if out_today:
         return out_today[:limit], None
-
     if out_latest:
         return out_latest[:limit], "此來源未提供可解析時間／日期，已改為顯示最新 10 條"
-
     return [], "RSS 無內容或暫時讀取不到"
 
 
@@ -277,7 +298,6 @@ def fetch_rss_latest(url: str, color: str, limit: int = 10) -> Tuple[List[Articl
 
     if out:
         return out[:limit], None
-
     return [], "RSS 無內容或暫時讀取不到"
 
 
@@ -285,8 +305,8 @@ def fetch_rss_latest(url: str, color: str, limit: int = 10) -> Tuple[List[Articl
 def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], Optional[str]]:
     """
     Now 新聞（本地）：
-    - 用你確認可用的 API：getNewsListv2?category=119&pageNo=1
-    - 即使 webUrl/shareUrl 為 null，仍用 newsId 自動砌回可打開的 player link
+    - 你驗證過可用 endpoint（但有時會 500）：getNewsListv2?category=119&pageNo=1
+    - 加 headers + retry，避免短暫 500 直接死
     """
     today = now_hk().date()
     NOW_API = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2"
@@ -295,7 +315,7 @@ def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], O
     out_latest: List[Article] = []
 
     try:
-        data = _safe_get_json(NOW_API, {"category": 119, "pageNo": 1}, timeout=12)
+        data = _safe_get_json_with_retry(NOW_API, {"category": 119, "pageNo": 1}, timeout=12, retries=3, sleep_s=0.8)
 
         # 取 list
         candidates = None
@@ -331,12 +351,9 @@ def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], O
             link = str(it.get("webUrl") or it.get("shareUrl") or it.get("url") or it.get("link") or "")
             if link.startswith("/"):
                 link = "https://news.now.com" + link
-
-            # webUrl 係 null 時，用 newsId 砌 player URL
             if (not link) and news_id:
                 link = f"https://news.now.com/home/local/player?newsId={news_id}"
 
-            # 時間：publishDate epoch ms
             dt = None
             time_str = "今日"
             raw = it.get("publishDate") or it.get("publishTime") or it.get("publishedAt") or it.get("date")
@@ -365,14 +382,12 @@ def fetch_now_local_today(color: str, limit: int = 10) -> Tuple[List[Article], O
 
         if out_today:
             return out_today[:limit], None
-
         if out_latest:
             return out_latest[:limit], "未能篩出『今日』新聞，已改為顯示最新 10 條"
-
         return [], "Now API 有回傳但未能解析到有效新聞（可能缺少 title/link/newsId）"
 
     except Exception as e:
-        return [], f"Now API 讀取失敗：{type(e).__name__}: {e}"
+        return [], f"Now API 讀取失敗（已重試 3 次）：{type(e).__name__}: {e}"
 
 
 # =====================
@@ -408,19 +423,10 @@ def build_card_html(title: str, articles: List[Article], warn: Optional[str] = N
     """
 
 
-def render_source(
-    col,
-    source_key: str,
-    title: str,
-    fetch_fn,
-    *fetch_args,
-    limit: int = 10,
-):
+def render_source(col, source_key: str, title: str, fetch_fn, *fetch_args, limit: int = 10):
     with col:
         arts, warn = fetch_fn(*fetch_args, limit)
-        # 記錄首次見到時間，做「新出現」紅色 20 分鐘
         arts = mark_and_flag_new(source_key, arts)
-        # 全部按時間由新到舊
         arts = sort_latest_first(arts)
         st.markdown(build_card_html(title, arts, warn), unsafe_allow_html=True)
 
@@ -432,7 +438,6 @@ GOV_ZH = "https://www.info.gov.hk/gia/rss/general_zh.xml"
 GOV_EN = "https://www.info.gov.hk/gia/rss/general_en.xml"
 RTHK = "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml"
 
-# 你 RSSHub 域名（可在 sidebar 改）
 DEFAULT_RSSHUB = "https://rsshub-production-9dfc.up.railway.app"
 
 # =====================
@@ -448,7 +453,6 @@ with st.sidebar:
     if st.toggle("每分鐘自動更新", value=True):
         st_autorefresh(interval=60_000, key="auto")
 
-# RSSHub 路由（按你給的清單）
 HK01 = f"{rsshub_base}/hk01/latest"
 ONCC = f"{rsshub_base}/oncc/zh-hant/news"
 TVB = f"{rsshub_base}/tvb/news/tc"
@@ -456,12 +460,8 @@ HKEJ = f"{rsshub_base}/hkej/index"
 STHEADLINE = f"{rsshub_base}/stheadline/std/realtime"
 ICABLE = f"{rsshub_base}/icable/all"
 
-# 注意：你話 RSSHub Now 壞咗，所以 Now 改用 API（唔再用 rsshub now/news）
-# NOW（本地）用 fetch_now_local_today()
-
 # =====================
 # 版面（保持「每個平台橫向並列」，不混合）
-# 你可以按自己圖二的排列，改下面 row 的順序，但每格都係獨立平台
 # =====================
 
 # Row 1
@@ -482,7 +482,6 @@ render_source(row2[3], "hkej", "信報即時", fetch_rss_latest, HKEJ, "#7c3aed"
 row3 = st.columns(4)
 render_source(row3[0], "stheadline", "星島即時", fetch_rss_latest, STHEADLINE, "#f97316", limit=limit)
 render_source(row3[1], "icable", "i-CABLE 有線", fetch_rss_latest, ICABLE, "#dc2626", limit=limit)
-# 你之後想加媒體就加在這兩格（暫留空）
 with row3[2]:
     st.markdown(build_card_html("（預留）", [], "你可以在這格加下一個 RSSHub/官方 RSS"), unsafe_allow_html=True)
 with row3[3]:
