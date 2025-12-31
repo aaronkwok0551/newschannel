@@ -154,7 +154,7 @@ def extract_time_from_html(soup):
 def fetch_full_article(url, summary_fallback=""):
     """ 
     針對香港各大媒體優化的全文抓取器 
-    目標：抓取真實內文，盡量不使用 RSS 摘要
+    目標：抓取真實內文，並移除多餘空行
     """
     if "news.google.com" in url or "google.com" in url:
         return summary_fallback if summary_fallback else "(連結還原失敗，請點擊連結查看)", None
@@ -184,8 +184,10 @@ def fetch_full_article(url, summary_fallback=""):
                     raw_text = "\n".join([s.get_text() for s in text_spans])
                 else:
                     raw_text = content_div.get_text(separator="\n")
+                
+                # 關鍵修改：過濾空行，並使用單一換行符 \n 連結
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
-                return "\n\n".join(lines), real_time
+                return "\n".join(lines), real_time
 
         # HK01
         elif "hk01.com" in url:
@@ -200,7 +202,9 @@ def fetch_full_article(url, summary_fallback=""):
             if content_div:
                 paragraphs = content_div.find_all('p')
                 if not paragraphs:
-                    return content_div.get_text(separator="\n\n").strip(), real_time
+                    raw_text = content_div.get_text(separator="\n")
+                    lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
+                    return "\n".join(lines), real_time
 
         # 明報 Mingpao
         elif "mingpao.com" in url:
@@ -226,7 +230,9 @@ def fetch_full_article(url, summary_fallback=""):
             if content_div:
                 paragraphs = content_div.find_all('p')
                 if not paragraphs:
-                    return content_div.get_text(separator="\n\n").strip(), real_time
+                    raw_text = content_div.get_text(separator="\n")
+                    lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
+                    return "\n".join(lines), real_time
 
         # --- 2. 通用智慧抓取 (如果上面沒命中) ---
         if not paragraphs:
@@ -253,7 +259,8 @@ def fetch_full_article(url, summary_fallback=""):
             # 真的抓不到才用 RSS 摘要
             return summary_fallback if summary_fallback else "(無法自動提取全文，可能受限於付費牆或動態載入)", real_time
             
-        full_text = "\n\n".join(clean_text)
+        # 關鍵修改：使用單一換行符 \n 連結，避免空行過多
+        full_text = "\n".join(clean_text)
         return full_text, real_time
 
     except Exception as e:
