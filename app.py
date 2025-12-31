@@ -33,21 +33,33 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
-    @keyframes blinker { 50% { opacity: 0.4; } }
+    @keyframes blinker { 
+        0% { opacity: 1; }
+        50% { opacity: 0.4; }
+        100% { opacity: 1; }
+    }
+    
     .new-badge {
         color: #ef4444;
         font-weight: 800;
+        /* 閃爍動畫 */
         animation: blinker 1.5s ease-in-out infinite;
         margin-right: 5px;
         font-size: 0.75em;
         display: inline-block;
         vertical-align: middle;
+        
+        /* 關鍵：設定超長過渡時間，讓它在滑鼠移開後「很久」才變回不透明 (視覺上等於不再出現) */
         opacity: 1;
-        transition: opacity 0.3s ease;
+        transition: opacity 999999s ease-in-out; 
     }
 
+    /* 當滑鼠滑過整行新聞時 */
     .news-item-row:hover .new-badge {
+        /* 立即隱藏 */
         opacity: 0;
+        animation: none; /* 停止閃爍 */
+        transition: opacity 0s; /* 立即生效 */
     }
     
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
@@ -268,7 +280,8 @@ def is_new_news(timestamp):
         else:
             timestamp = timestamp.astimezone(HK_TZ)
         diff = (now - timestamp).total_seconds() / 60
-        return 0 <= diff <= 20
+        # 修正：30 分鐘內為 New
+        return 0 <= diff <= 30
     except:
         return False
 
@@ -514,7 +527,7 @@ for row in rows:
                 for item in items:
                     link = item['link']
                     
-                    # --- NEW 邏輯 ---
+                    # --- NEW 邏輯 (30分鐘) ---
                     is_new = is_new_news(item['timestamp'])
                     
                     is_selected = link in st.session_state.selected_links
@@ -528,11 +541,10 @@ for row in rows:
                                 st.session_state.selected_links.add(k)
                         st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_state)
                     with c2:
-                        # 使用 CSS hover 隱藏 new badge
+                        # CSS hover 隱藏 new badge
                         new_badge_html = f'<span class="new-badge">NEW!</span>' if is_new else ''
                         text_style = 'class="read-text"' if is_selected else ""
                         
-                        # 移除字串縮排以確保 Markdown 正常渲染
                         item_html = f"""<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{item['title']}</a><div class="news-time">{item['time_str']}</div></div>"""
                         st.markdown(item_html, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
