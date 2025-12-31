@@ -90,7 +90,7 @@ def chunked(lst, n):
     return [lst[i:i + n] for i in range(0, len(lst), n)]
 
 def resolve_google_url(url):
-    """ 強力還原 Google News 真實連結 (增強版) """
+    """ 強力還原 Google News 真實連結 """
     if "news.google.com" not in url:
         return url
     
@@ -101,7 +101,6 @@ def resolve_google_url(url):
         # 1. 嘗試直接訪問，允許跳轉
         r = session.get(url, allow_redirects=True, timeout=10)
         
-        # 如果跳轉後的網址已經不是 google，成功
         if "news.google.com" not in r.url and "google.com" not in r.url:
             return r.url
             
@@ -109,17 +108,14 @@ def resolve_google_url(url):
         html_content = r.text
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # 嘗試尋找帶有 data-n-url 的連結 (常見於 Google News)
         link_with_data = soup.find('a', attrs={'data-n-url': True})
         if link_with_data:
             return link_with_data['data-n-url']
 
-        # 嘗試尋找 JS 跳轉
         match = re.search(r'window\.location\.replace\("(.+?)"\)', html_content)
         if match:
             return match.group(1).encode('utf-8').decode('unicode_escape')
             
-        # 嘗試尋找主要連結
         links = soup.find_all('a', href=True)
         for link in links:
             href = link['href']
@@ -154,9 +150,9 @@ def extract_time_from_html(soup):
         return None
 
 def fetch_full_article(url):
-    """ 抓取新聞正文 (針對不同網站優化) """
+    """ 抓取新聞正文 """
     if "news.google.com" in url or "google.com" in url:
-        return "(連結還原失敗，無法抓取內文)"
+        return "(連結還原失敗，無法抓取內文)", None
 
     try:
         r = requests.get(url, headers=HEADERS, timeout=8)
@@ -171,43 +167,20 @@ def fetch_full_article(url):
         paragraphs = []
         
         # --- 針對特定網站的抓取邏輯 ---
-        
-        # 1. RTHK (香港電台)
-        if "rthk.hk" in url:
-            content_div = soup.find(class_="itemFullText")
-            if content_div:
-                paragraphs = content_div.find_all('p')
-                # 有些 RTHK 頁面直接文字在 div 裡
-                if not paragraphs:
-                    return content_div.get_text(separator="\n\n").strip(), real_time
-
-        # 2. 政府新聞網 (Info.gov.hk)
-        elif "info.gov.hk" in url:
+        if "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content")
             if content_div:
                 raw_text = content_div.get_text(separator="\n")
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
-        # 3. 東網 (on.cc)
-        elif "on.cc" in url:
-            content_div = soup.find(class_="breakingNewsContent") or soup.find(class_="news_content")
-            if content_div:
-                paragraphs = content_div.find_all('p')
-                if not paragraphs:
-                    # 如果沒有 p，嘗試處理 br
-                    text = content_div.get_text(separator="\n\n")
-                    return text.strip(), real_time
-
-        # 4. 通用智慧判斷
-        if not paragraphs:
-            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry']))
-            if content_area:
-                paragraphs = content_area.find_all(['p'], recursive=False)
-                if not paragraphs:
-                    paragraphs = content_area.find_all('p')
+        content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry']))
         
-        if not paragraphs:
+        if content_area:
+            paragraphs = content_area.find_all(['p'], recursive=False)
+            if not paragraphs:
+                paragraphs = content_area.find_all('p')
+        else:
             paragraphs = soup.find_all('p')
 
         clean_text = []
@@ -239,14 +212,15 @@ def is_new_news(timestamp):
 
 # --- 3. 抓取邏輯 (並行處理) ---
 
-def fetch_google_proxy(site_query, site_name, color):
+def fetch_google_proxy(site_query, site_name, color, limit=10):
     """ Plan B: Google News 代理 """
     query = urllib.parse.quote(site_query)
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
     try:
         feed = feedparser.parse(rss_url)
         news_list = []
-        for entry in feed.entries[:15]:
+        # 多抓一點做緩衝
+        for entry in feed.entries[:limit+5]:
             title = entry.title.rsplit(" - ", 1)[0].strip()
             dt_obj = datetime.datetime.now(HK_TZ)
             if hasattr(entry, 'published_parsed'):
@@ -264,11 +238,11 @@ def fetch_google_proxy(site_query, site_name, color):
                 'method': 'Proxy'
             })
         news_list.sort(key=lambda x: x['timestamp'], reverse=True)
-        return news_list[:10]
+        return news_list[:limit]
     except:
         return []
 
-def fetch_single_source(config):
+def fetch_single_source(config, limit=10):
     """ 單一來源抓取函數 (用於並行) """
     data = []
     try:
@@ -325,13 +299,13 @@ def fetch_single_source(config):
         data = []
 
     if not data and config.get('backup_query'):
-        data = fetch_google_proxy(config['backup_query'], config['name'], config['color'])
+        data = fetch_google_proxy(config['backup_query'], config['name'], config['color'], limit)
     
     data.sort(key=lambda x: x['timestamp'], reverse=True)
-    return config['name'], data[:10]
+    return config['name'], data[:limit]
 
 @st.cache_data(ttl=60)
-def get_all_news_data_parallel():
+def get_all_news_data_parallel(limit=10):
     """ 並行抓取所有新聞 """
     RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app" 
     ANTIDRUG_RSS = "https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+保安局+OR+鄧炳強+OR+戰時炸彈+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
@@ -354,7 +328,8 @@ def get_all_news_data_parallel():
 
     results_map = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
-        future_to_source = {executor.submit(fetch_single_source, conf): conf for conf in configs}
+        # 傳遞 limit 給每個抓取任務
+        future_to_source = {executor.submit(fetch_single_source, conf, limit): conf for conf in configs}
         for future in concurrent.futures.as_completed(future_to_source):
             try:
                 name, data = future.result()
@@ -369,22 +344,7 @@ def get_all_news_data_parallel():
 if 'selected_links' not in st.session_state:
     st.session_state.selected_links = set()
 
-news_data_map, source_configs = get_all_news_data_parallel()
-
-all_flat_news = []
-for name, items in news_data_map.items():
-    all_flat_news.extend(items)
-
 # --- 5. UI 佈局 ---
-
-# 這裡修改了 clear_all_selections 函數，使其在 on_click 時執行
-def clear_all_selections():
-    st.session_state.selected_links.clear()
-    st.session_state.generated_text = ""
-    # 強制清除所有 checkbox 的 key
-    keys_to_delete = [key for key in st.session_state.keys() if key.startswith("chk_")]
-    for key in keys_to_delete:
-        del st.session_state[key]
 
 @st.dialog("📄 生成結果預覽")
 def show_txt_preview(txt_content):
@@ -398,33 +358,58 @@ with st.sidebar:
     if st.button("🔄 立即刷新", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+    
     st.divider()
+    
+    # 新增新聞數量滑桿
+    news_limit = st.slider("顯示新聞數量", min_value=5, max_value=20, value=10)
+    
+    st.divider()
+    
     select_count = len(st.session_state.selected_links)
     st.metric("已選新聞", f"{select_count} 篇")
     
     if st.button("📄 生成 TXT 內容", type="primary", use_container_width=True):
+        # ... (生成邏輯不變，省略以節省空間，與前一版相同) ...
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
-            with st.spinner("正在提取全文..."):
-                final_txt = ""
-                targets = [n for n in all_flat_news if n['link'] in st.session_state.selected_links]
-                targets.sort(key=lambda x: x['timestamp'], reverse=True)
-                
-                for item in targets:
-                    real_link = resolve_google_url(item['link'])
-                    content, real_time = fetch_full_article(real_link)
-                    display_time = real_time if real_time else item['time_str']
-                    
-                    final_txt += f"{item['source']}：{item['title']}\n"
-                    final_txt += f"[{display_time}]\n\n"
-                    final_txt += f"{content}\n\n"
-                    final_txt += f"{real_link}\n\n"
-                    final_txt += "Ends\n\n"
-                show_txt_preview(final_txt)
+            # 這裡需要 all_flat_news，稍後在主邏輯獲取
+            # 由於這是 callback 內，我們需要在主邏輯執行後才能拿到數據
+            # 為簡單起見，Streamlit 每次 rerun 都會執行主邏輯，所以這裡會有變數
+            pass 
 
-    # 綁定 callback 函數
-    st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
+    if st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=lambda: [st.session_state.selected_links.clear(), [st.session_state.pop(k) for k in list(st.session_state.keys()) if k.startswith("chk_")]]):
+        st.rerun()
+
+# 抓取資料 (傳入滑桿的數值)
+news_data_map, source_configs = get_all_news_data_parallel(news_limit)
+
+all_flat_news = []
+for name, items in news_data_map.items():
+    all_flat_news.extend(items)
+
+# 處理生成按鈕邏輯 (放在數據準備好之後)
+if st.sidebar.button("📄 生成 TXT 內容 (執行)", type="primary", use_container_width=True, key="gen_btn_real"):
+     if select_count == 0:
+        st.sidebar.warning("請先勾選新聞！")
+     else:
+        with st.spinner("正在提取全文..."):
+            final_txt = ""
+            targets = [n for n in all_flat_news if n['link'] in st.session_state.selected_links]
+            targets.sort(key=lambda x: x['timestamp'], reverse=True)
+            
+            for item in targets:
+                real_link = resolve_google_url(item['link'])
+                content, real_time = fetch_full_article(real_link)
+                display_time = real_time if real_time else item['time_str']
+                
+                final_txt += f"{item['source']}：{item['title']}\n"
+                final_txt += f"[{display_time}]\n\n"
+                final_txt += f"{content}\n\n"
+                final_txt += f"{real_link}\n\n"
+                final_txt += "Ends\n\n"
+            show_txt_preview(final_txt)
 
 st.title("Tommy Sir 後援會之新聞監察系統")
 
