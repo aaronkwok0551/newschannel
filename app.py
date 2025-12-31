@@ -28,7 +28,7 @@ st.set_page_config(
 # 自動刷新 (每 60 秒)
 st_autorefresh(interval=60 * 1000, limit=None, key="news_autoupdate")
 
-# --- CSS 樣式 ---
+# --- CSS 樣式 (Clean Style) ---
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
@@ -149,10 +149,11 @@ def extract_time_from_html(soup):
     except:
         return None
 
-def fetch_full_article(url):
-    """ 抓取新聞正文 """
+def fetch_full_article(url, summary_fallback=""):
+    """ 抓取新聞正文，若失敗則使用摘要作為備案 """
+    # 如果是 Google News 轉址網址且未被還原，直接使用摘要
     if "news.google.com" in url or "google.com" in url:
-        return "(連結還原失敗，無法抓取內文)", None
+        return summary_fallback if summary_fallback else "(無法抓取 Google News 轉址內容，請點擊連結查看)", None
 
     try:
         r = requests.get(url, headers=HEADERS, timeout=8)
@@ -167,20 +168,44 @@ def fetch_full_article(url):
         paragraphs = []
         
         # --- 針對特定網站的抓取邏輯 ---
-        if "info.gov.hk" in url:
+        
+        # 1. RTHK (香港電台)
+        if "rthk.hk" in url:
+            content_div = soup.find(class_="itemFullText")
+            if content_div:
+                paragraphs = content_div.find_all('p')
+                # 有些 RTHK 頁面直接文字在 div 裡
+                if not paragraphs:
+                    text = content_div.get_text(separator="\n\n").strip()
+                    return text, real_time
+
+        # 2. 政府新聞網 (Info.gov.hk)
+        elif "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content")
             if content_div:
                 raw_text = content_div.get_text(separator="\n")
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
-        content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry']))
+        # 3. 東網 (on.cc)
+        elif "on.cc" in url:
+            content_div = soup.find(class_="breakingNewsContent") or soup.find(class_="news_content")
+            if content_div:
+                paragraphs = content_div.find_all('p')
+                if not paragraphs:
+                    text = content_div.get_text(separator="\n\n")
+                    return text.strip(), real_time
+
+        # 4. 通用智慧判斷
+        if not paragraphs:
+            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry']))
+            if content_area:
+                paragraphs = content_area.find_all(['p'], recursive=False)
+                if not paragraphs:
+                    paragraphs = content_area.find_all('p')
         
-        if content_area:
-            paragraphs = content_area.find_all(['p'], recursive=False)
-            if not paragraphs:
-                paragraphs = content_area.find_all('p')
-        else:
+        # 5. 兜底方案
+        if not paragraphs:
             paragraphs = soup.find_all('p')
 
         clean_text = []
@@ -190,12 +215,14 @@ def fetch_full_article(url):
                 clean_text.append(text)
 
         if not clean_text:
-            return "(無法自動提取全文，請點擊連結查看網頁版)", real_time
+            # 如果抓不到正文，回傳摘要
+            return summary_fallback if summary_fallback else "(無法自動提取全文，請點擊連結查看網頁版)", real_time
             
         full_text = "\n\n".join(clean_text)
         return full_text, real_time
     except Exception as e:
-        return f"(全文抓取失敗: {str(e)})", None
+        # 發生錯誤時回傳摘要
+        return summary_fallback if summary_fallback else f"(全文抓取失敗: {str(e)})", None
 
 def is_new_news(timestamp):
     if not timestamp: return False
@@ -219,7 +246,6 @@ def fetch_google_proxy(site_query, site_name, color, limit=10):
     try:
         feed = feedparser.parse(rss_url)
         news_list = []
-        # 多抓一點做緩衝
         for entry in feed.entries[:limit+5]:
             title = entry.title.rsplit(" - ", 1)[0].strip()
             dt_obj = datetime.datetime.now(HK_TZ)
@@ -228,6 +254,13 @@ def fetch_google_proxy(site_query, site_name, color, limit=10):
             
             dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
             
+            # 提取摘要
+            summary = ""
+            if hasattr(entry, 'summary'):
+                summary = BeautifulSoup(entry.summary, "html.parser").get_text()
+            elif hasattr(entry, 'description'):
+                summary = BeautifulSoup(entry.description, "html.parser").get_text()
+
             news_list.append({
                 'source': site_name, 
                 'title': title, 
@@ -235,7 +268,8 @@ def fetch_google_proxy(site_query, site_name, color, limit=10):
                 'time_str': dt_str,
                 'timestamp': dt_obj,
                 'color': color, 
-                'method': 'Proxy'
+                'method': 'Proxy',
+                'summary': summary
             })
         news_list.sort(key=lambda x: x['timestamp'], reverse=True)
         return news_list[:limit]
@@ -272,7 +306,8 @@ def fetch_single_source(config, limit=10):
                         'source': config['name'], 'title': title, 'link': link, 
                         'time_str': dt_obj.strftime('%Y-%m-%d %H:%M'), 
                         'timestamp': dt_obj, 
-                        'color': config['color'], 'method': 'API'
+                        'color': config['color'], 'method': 'API',
+                        'summary': "" # Now API 通常無摘要
                     })
 
         elif config['type'] == 'rss':
@@ -288,11 +323,19 @@ def fetch_single_source(config, limit=10):
                 if "news.google.com" in config['url']:
                     title = title.rsplit(' - ', 1)[0].strip()
 
+                # 提取摘要 (Description/Summary)
+                summary = ""
+                if hasattr(entry, 'summary'):
+                    summary = BeautifulSoup(entry.summary, "html.parser").get_text()
+                elif hasattr(entry, 'description'):
+                    summary = BeautifulSoup(entry.description, "html.parser").get_text()
+
                 data.append({
                     'source': config['name'], 'title': title, 'link': entry.link, 
                     'time_str': dt_obj.strftime('%Y-%m-%d %H:%M'), 
                     'timestamp': dt_obj, 
-                    'color': config['color'], 'method': 'RSS'
+                    'color': config['color'], 'method': 'RSS',
+                    'summary': summary
                 })
 
     except Exception:
@@ -353,12 +396,13 @@ def show_txt_preview(txt_content):
         st.rerun()
 
 def clear_all_selections():
+    # 1. 清空集合
     st.session_state.selected_links.clear()
     st.session_state.generated_text = ""
-    # 強制刪除所有 checkbox 的 session state 記錄
-    keys_to_clear = [key for key in st.session_state.keys() if key.startswith("chk_")]
-    for key in keys_to_clear:
-        del st.session_state[key]
+    # 2. 將所有 checkbox 的 session state key 值設為 False
+    for key in list(st.session_state.keys()):
+        if key.startswith("chk_"):
+            st.session_state[key] = False
 
 with st.sidebar:
     st.header("⚙️ 控制台")
@@ -405,7 +449,8 @@ if st.sidebar.button("📄 生成 TXT 內容 (執行)", type="primary", use_cont
             
             for item in targets:
                 real_link = resolve_google_url(item['link'])
-                content, real_time = fetch_full_article(real_link)
+                # 傳入 item.get('summary', '') 作為 fallback
+                content, real_time = fetch_full_article(real_link, item.get('summary', ''))
                 display_time = real_time if real_time else item['time_str']
                 
                 final_txt += f"{item['source']}：{item['title']}\n"
