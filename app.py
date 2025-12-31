@@ -33,7 +33,6 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
-    /* NEW Badge 樣式 (含閃爍) */
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
         color: #ef4444;
@@ -43,7 +42,13 @@ st.markdown("""
         font-size: 0.75em;
         display: inline-block;
         vertical-align: middle;
-        transition: opacity 0.3s ease; /* 消失時的過渡效果 */
+        opacity: 1;
+        transition: opacity 0.3s ease; /* 平滑消失效果 */
+    }
+
+    /* 關鍵修改：使用 CSS hover 來隱藏 NEW 標籤，取代不穩定的 JS */
+    .news-item-row:hover .new-badge {
+        opacity: 0;
     }
     
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
@@ -97,6 +102,7 @@ def resolve_google_url(url):
     """ 強力還原 Google News 真實連結 """
     if "news.google.com" not in url:
         return url
+    
     try:
         session = requests.Session()
         session.headers.update(HEADERS)
@@ -121,6 +127,7 @@ def resolve_google_url(url):
             href = link['href']
             if href.startswith('http') and 'google.com' not in href and 'google.co' not in href:
                 return href
+
         return r.url 
     except:
         return url
@@ -128,10 +135,14 @@ def resolve_google_url(url):
 def extract_time_from_html(soup):
     try:
         meta_tags = [
-            {'property': 'article:published_time'}, {'property': 'og:updated_time'},
-            {'name': 'pubdate'}, {'name': 'publish-date'}, {'name': 'date'},
+            {'property': 'article:published_time'},
+            {'property': 'og:updated_time'},
+            {'name': 'pubdate'},
+            {'name': 'publish-date'},
+            {'name': 'date'},
             {'itemprop': 'datePublished'}
         ]
+        
         for tag in meta_tags:
             meta = soup.find('meta', attrs=tag)
             if meta and meta.get('content'):
@@ -159,6 +170,8 @@ def fetch_full_article(url, summary_fallback=""):
             tag.decompose()
 
         paragraphs = []
+        
+        # --- 針對特定網站的抓取邏輯 ---
         if "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content") or soup.find(id="content")
             if content_div:
@@ -167,13 +180,16 @@ def fetch_full_article(url, summary_fallback=""):
                     raw_text = "\n".join([s.get_text() for s in text_spans])
                 else:
                     raw_text = content_div.get_text(separator="\n")
+                
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
         content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry']))
+        
         if content_area:
             paragraphs = content_area.find_all(['p'], recursive=False)
-            if not paragraphs: paragraphs = content_area.find_all('p')
+            if not paragraphs:
+                paragraphs = content_area.find_all('p')
         else:
             paragraphs = soup.find_all('p')
 
@@ -191,27 +207,37 @@ def fetch_full_article(url, summary_fallback=""):
     except Exception as e:
         return summary_fallback if summary_fallback else f"(全文抓取失敗: {str(e)})", None
 
-# --- 3. 抓取邏輯 (加入日期過濾) ---
+def is_new_news(timestamp):
+    if not timestamp: return False
+    try:
+        now = datetime.datetime.now(HK_TZ)
+        if timestamp.tzinfo is None:
+            timestamp = HK_TZ.localize(timestamp)
+        else:
+            timestamp = timestamp.astimezone(HK_TZ)
+        diff = (now - timestamp).total_seconds() / 60
+        return 0 <= diff <= 20
+    except:
+        return False
+
+# --- 3. 抓取邏輯 ---
 
 def fetch_google_proxy(site_query, site_name, color, limit=10):
     query = urllib.parse.quote(site_query)
-    # when:1d 確保是最近的
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
     try:
         feed = feedparser.parse(rss_url)
         news_list = []
-        today_date = datetime.datetime.now(HK_TZ).date() # 獲取今天日期
+        today_date = datetime.datetime.now(HK_TZ).date() 
 
-        for entry in feed.entries: # 抓取所有，稍後過濾
+        for entry in feed.entries: 
             title = entry.title.rsplit(" - ", 1)[0].strip()
             dt_obj = datetime.datetime.now(HK_TZ)
             if hasattr(entry, 'published_parsed'):
                 dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
             
-            # --- 核心修改：過濾非今天的新聞 ---
             if dt_obj.date() != today_date:
                 continue
-            # -------------------------------
 
             dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
             summary = ""
@@ -230,7 +256,7 @@ def fetch_google_proxy(site_query, site_name, color, limit=10):
 
 def fetch_single_source(config, limit=10):
     data = []
-    today_date = datetime.datetime.now(HK_TZ).date() # 獲取今天日期
+    today_date = datetime.datetime.now(HK_TZ).date() 
 
     try:
         if config['type'] == 'now_api':
@@ -254,7 +280,6 @@ def fetch_single_source(config, limit=10):
                  else:
                      dt_obj = datetime.datetime.now(HK_TZ)
                  
-                 # --- 過濾非今天 ---
                  if dt_obj.date() != today_date: continue
                  
                  if title and link:
@@ -273,7 +298,6 @@ def fetch_single_source(config, limit=10):
                 else:
                     dt_obj = datetime.datetime.now(HK_TZ)
                 
-                # --- 過濾非今天 ---
                 if dt_obj.date() != today_date: continue
 
                 title = entry.title.strip()
@@ -336,8 +360,6 @@ def get_all_news_data_parallel(limit=10):
 
 if 'selected_links' not in st.session_state:
     st.session_state.selected_links = set()
-if 'seen_links' not in st.session_state:
-    st.session_state.seen_links = set() # 記錄已出現過的連結
 
 # --- 5. UI 佈局 ---
 
@@ -375,39 +397,39 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
-            with st.spinner("正在提取全文..."):
-                final_txt = ""
-                # 需要在 callback 外部獲取數據，這裡暫時使用空列表，實際 logic 在下方
-                # 為了避免重构太多，我們將生成邏輯放在主流程中處理
-                st.session_state.trigger_generate = True
+            # 這裡需要 all_flat_news，稍後在主邏輯獲取
+            pass 
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
-# 抓取資料
+# 抓取資料 (傳入滑桿的數值)
 news_data_map, source_configs = get_all_news_data_parallel(news_limit)
 
 all_flat_news = []
 for name, items in news_data_map.items():
     all_flat_news.extend(items)
 
-# 處理生成 (透過 flag 觸發，確保有數據)
-if st.session_state.get("trigger_generate", False):
-    st.session_state.trigger_generate = False # Reset flag
-    final_txt = ""
-    targets = [n for n in all_flat_news if n['link'] in st.session_state.selected_links]
-    targets.sort(key=lambda x: x['timestamp'], reverse=True)
-    
-    for item in targets:
-        real_link = resolve_google_url(item['link'])
-        content, real_time = fetch_full_article(real_link, item.get('summary', ''))
-        display_time = real_time if real_time else item['time_str']
-        
-        final_txt += f"{item['source']}：{item['title']}\n"
-        final_txt += f"[{display_time}]\n\n"
-        final_txt += f"{content}\n\n"
-        final_txt += f"{real_link}\n\n"
-        final_txt += "Ends\n\n"
-    show_txt_preview(final_txt)
+# 處理生成按鈕邏輯 (放在數據準備好之後)
+if st.sidebar.button("📄 生成 TXT 內容 (執行)", type="primary", use_container_width=True, key="gen_btn_real"):
+     if select_count == 0:
+        st.sidebar.warning("請先勾選新聞！")
+     else:
+        with st.spinner("正在提取全文..."):
+            final_txt = ""
+            targets = [n for n in all_flat_news if n['link'] in st.session_state.selected_links]
+            targets.sort(key=lambda x: x['timestamp'], reverse=True)
+            
+            for item in targets:
+                real_link = resolve_google_url(item['link'])
+                content, real_time = fetch_full_article(real_link, item.get('summary', ''))
+                display_time = real_time if real_time else item['time_str']
+                
+                final_txt += f"{item['source']}：{item['title']}\n"
+                final_txt += f"[{display_time}]\n\n"
+                final_txt += f"{content}\n\n"
+                final_txt += f"{real_link}\n\n"
+                final_txt += "Ends\n\n"
+            show_txt_preview(final_txt)
 
 st.title("Tommy Sir 後援會之新聞監察系統")
 
@@ -433,11 +455,8 @@ for row in rows:
                 for item in items:
                     link = item['link']
                     
-                    # --- NEW 邏輯：判斷是否為第一次出現 ---
-                    # 如果連結不在 seen_links 中，則視為 New，並加入集合
-                    is_new = link not in st.session_state.seen_links
-                    if is_new:
-                        st.session_state.seen_links.add(link)
+                    # --- NEW 邏輯 ---
+                    is_new = is_new_news(item['timestamp'])
                     
                     is_selected = link in st.session_state.selected_links
                     
@@ -450,17 +469,11 @@ for row in rows:
                                 st.session_state.selected_links.add(k)
                         st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_state)
                     with c2:
-                        # 使用 JS onmouseover 來隱藏 new badge
+                        # 使用 CSS hover 隱藏 new badge
                         new_badge_html = f'<span class="new-badge">NEW!</span>' if is_new else ''
                         text_style = 'class="read-text"' if is_selected else ""
                         
-                        # 這裡將整個 row 包裹，並加入 onmouseover 事件
-                        item_html = f"""
-                        <div class="news-item-row" onmouseover="this.querySelector('.new-badge').style.opacity='0'; setTimeout(()=>this.querySelector('.new-badge').style.display='none', 300);">
-                            {new_badge_html}
-                            <a href="{link}" target="_blank" {text_style}>{item['title']}</a>
-                            <div class="news-time">{item['time_str']}</div>
-                        </div>
-                        """
+                        # 移除字串縮排以確保 Markdown 正常渲染
+                        item_html = f"""<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{item['title']}</a><div class="news-time">{item['time_str']}</div></div>"""
                         st.markdown(item_html, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
