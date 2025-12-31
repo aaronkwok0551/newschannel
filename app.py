@@ -367,10 +367,10 @@ def clear_all_selections():
     st.session_state.selected_links.clear()
     st.session_state.generated_text = ""
     st.session_state.show_preview = False
-    # 強制刪除 Checkbox 狀態
-    keys_to_clear = [k for k in st.session_state.keys() if k.startswith("chk_")]
-    for k in keys_to_clear:
-        del st.session_state[k]
+    # 強制將所有 checkbox session state 設為 False
+    for key in list(st.session_state.keys()):
+        if key.startswith("chk_"):
+            st.session_state[key] = False
 
 @st.dialog("📄 生成結果預覽")
 def show_txt_preview(txt_content):
@@ -405,7 +405,7 @@ with st.sidebar:
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
-# 抓取資料
+# 抓取資料 (傳入滑桿的數值)
 news_data_map, source_configs = get_all_news_data_parallel(news_limit)
 
 all_flat_news = []
