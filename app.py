@@ -43,16 +43,16 @@ st.markdown("""
         display: inline-block;
         vertical-align: middle;
         opacity: 1;
-        transition: opacity 0.3s ease; /* 平滑消失效果 */
+        transition: opacity 0.3s ease;
     }
 
-    /* 關鍵修改：使用 CSS hover 來隱藏 NEW 標籤，取代不穩定的 JS */
+    /* 關鍵修改：使用 CSS hover 來隱藏 NEW 標籤 */
     .news-item-row:hover .new-badge {
         opacity: 0;
     }
     
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
-    a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; }
+    a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
     .news-source-header { 
@@ -71,9 +71,11 @@ st.markdown("""
         padding-bottom: 5px; height: 100%;
     }
 
-    .news-item-row { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; transition: background-color 0.1s; }
+    .news-item-row { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; transition: background-color 0.1s; }
     .news-item-row:hover { background-color: #f8fafc; }
     .news-item-row:last-child { border-bottom: none; }
+    
+    .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
@@ -127,7 +129,6 @@ def resolve_google_url(url):
             href = link['href']
             if href.startswith('http') and 'google.com' not in href and 'google.co' not in href:
                 return href
-
         return r.url 
     except:
         return url
@@ -135,14 +136,10 @@ def resolve_google_url(url):
 def extract_time_from_html(soup):
     try:
         meta_tags = [
-            {'property': 'article:published_time'},
-            {'property': 'og:updated_time'},
-            {'name': 'pubdate'},
-            {'name': 'publish-date'},
-            {'name': 'date'},
+            {'property': 'article:published_time'}, {'property': 'og:updated_time'},
+            {'name': 'pubdate'}, {'name': 'publish-date'}, {'name': 'date'},
             {'itemprop': 'datePublished'}
         ]
-        
         for tag in meta_tags:
             meta = soup.find('meta', attrs=tag)
             if meta and meta.get('content'):
@@ -155,57 +152,112 @@ def extract_time_from_html(soup):
         return None
 
 def fetch_full_article(url, summary_fallback=""):
-    """ 抓取新聞正文 """
+    """ 
+    針對香港各大媒體優化的全文抓取器 
+    目標：抓取真實內文，盡量不使用 RSS 摘要
+    """
     if "news.google.com" in url or "google.com" in url:
-        return summary_fallback if summary_fallback else "(連結還原失敗，無法抓取內文)", None
+        return summary_fallback if summary_fallback else "(連結還原失敗，請點擊連結查看)", None
 
     try:
-        r = requests.get(url, headers=HEADERS, timeout=8)
+        r = requests.get(url, headers=HEADERS, timeout=10) # 增加 timeout
         r.encoding = r.apparent_encoding 
         soup = BeautifulSoup(r.text, 'html.parser')
         
         real_time = extract_time_from_html(soup)
         
-        for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', 'input', '.ad']):
+        # 移除干擾元素 (廣告、選單、推薦閱讀等)
+        for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', 'input', '.ad', '.advertisement', '.related-news', '.hidden']):
             tag.decompose()
 
         paragraphs = []
         
-        # --- 針對特定網站的抓取邏輯 ---
+        # --- 1. 針對特定網站的精準抓取 ---
+        
+        # 政府新聞網
         if "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content") or soup.find(id="content")
             if content_div:
+                # 處理政府新聞稿特殊的 span 排版
                 text_spans = content_div.find_all('span', style=lambda x: x and 'font-size' in x)
                 if text_spans:
                     raw_text = "\n".join([s.get_text() for s in text_spans])
                 else:
                     raw_text = content_div.get_text(separator="\n")
-                
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
-        content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry']))
+        # HK01
+        elif "hk01.com" in url:
+            # 常見 class: article-grid__content-section, article-content
+            content_div = soup.find('div', class_=re.compile(r'article-content|article_content'))
+            if content_div:
+                paragraphs = content_div.find_all(['p', 'div'], recursive=False)
+
+        # 東網 on.cc
+        elif "on.cc" in url:
+            content_div = soup.find(class_="breakingNewsContent") or soup.find(class_="news_content")
+            if content_div:
+                paragraphs = content_div.find_all('p')
+                if not paragraphs:
+                    return content_div.get_text(separator="\n\n").strip(), real_time
+
+        # 明報 Mingpao
+        elif "mingpao.com" in url:
+            content_div = soup.find(class_="txt4") 
+            if content_div:
+                paragraphs = content_div.find_all('p')
+
+        # 星島 Stheadline
+        elif "stheadline.com" in url:
+            content_div = soup.find(class_="content-article") or soup.find('div', class_=re.compile(r'article-content'))
+            if content_div:
+                paragraphs = content_div.find_all('p')
+
+        # 信報 HKEJ
+        elif "hkej.com" in url:
+            content_div = soup.find(id="article-content")
+            if content_div:
+                paragraphs = content_div.find_all('p')
+
+        # RTHK
+        elif "rthk.hk" in url:
+            content_div = soup.find(class_="itemFullText")
+            if content_div:
+                paragraphs = content_div.find_all('p')
+                if not paragraphs:
+                    return content_div.get_text(separator="\n\n").strip(), real_time
+
+        # --- 2. 通用智慧抓取 (如果上面沒命中) ---
+        if not paragraphs:
+            # 搜尋常見的新聞內文容器名稱
+            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content']))
+            if content_area:
+                paragraphs = content_area.find_all(['p'], recursive=False)
+                if not paragraphs:
+                    paragraphs = content_area.find_all('p')
         
-        if content_area:
-            paragraphs = content_area.find_all(['p'], recursive=False)
-            if not paragraphs:
-                paragraphs = content_area.find_all('p')
-        else:
+        # --- 3. 兜底方案 (抓頁面所有 P) ---
+        if not paragraphs:
             paragraphs = soup.find_all('p')
 
+        # 內容清洗與組合
         clean_text = []
         for p in paragraphs:
             text = p.get_text().strip()
-            if len(text) > 5 and "Copyright" not in text:
+            # 過濾太短的行 (例如 "記者：XXX") 或版權宣告
+            if len(text) > 5 and "Copyright" not in text and "版權所有" not in text and "點擊閱讀" not in text:
                 clean_text.append(text)
 
         if not clean_text:
-            return summary_fallback if summary_fallback else "(無法自動提取全文，請點擊連結查看網頁版)", real_time
+            # 真的抓不到才用 RSS 摘要
+            return summary_fallback if summary_fallback else "(無法自動提取全文，可能受限於付費牆或動態載入)", real_time
             
         full_text = "\n\n".join(clean_text)
         return full_text, real_time
+
     except Exception as e:
-        return summary_fallback if summary_fallback else f"(全文抓取失敗: {str(e)})", None
+        return summary_fallback if summary_fallback else f"(抓取錯誤: {str(e)})", None
 
 def is_new_news(timestamp):
     if not timestamp: return False
@@ -397,8 +449,22 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
-            # 這裡需要 all_flat_news，稍後在主邏輯獲取
-            pass 
+            with st.spinner("正在提取全文..."):
+                final_txt = ""
+                targets = [n for n in all_flat_news if n['link'] in st.session_state.selected_links]
+                targets.sort(key=lambda x: x['timestamp'], reverse=True)
+                
+                for item in targets:
+                    real_link = resolve_google_url(item['link'])
+                    content, real_time = fetch_full_article(real_link, item.get('summary', ''))
+                    display_time = real_time if real_time else item['time_str']
+                    
+                    final_txt += f"{item['source']}：{item['title']}\n"
+                    final_txt += f"[{display_time}]\n\n"
+                    final_txt += f"{content}\n\n"
+                    final_txt += f"{real_link}\n\n"
+                    final_txt += "Ends\n\n"
+                show_txt_preview(final_txt)
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
