@@ -90,19 +90,11 @@ st.markdown("""
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
 UTC_TZ = pytz.timezone('UTC')
 
-# 升級版 Headers (模擬真實瀏覽器，防止被擋)
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0',
+    'Cookie': 'CONSENT=YES+cb.20210720-07-p0.en+FX+417; '
 }
 
 # --- 2. 核心功能函式 ---
@@ -171,7 +163,7 @@ def fetch_full_article(url, summary_fallback=""):
     try:
         session = requests.Session()
         session.headers.update(HEADERS)
-        r = session.get(url, timeout=15) # 增加 timeout
+        r = session.get(url, timeout=15) 
         r.encoding = r.apparent_encoding 
         soup = BeautifulSoup(r.text, 'html.parser')
         
@@ -197,14 +189,11 @@ def fetch_full_article(url, summary_fallback=""):
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
-        # 星島 Stheadline (修正邏輯)
+        # 星島 Stheadline
         elif "stheadline.com" in url:
-            # 星島的正文容器
             content_div = soup.find('div', class_='paragraph') or soup.find('div', class_='article-content') or soup.find('section', class_='article-body')
             if content_div:
-                # 抓取 p 和 div (星島有時用 div 當段落)
                 paragraphs = content_div.find_all(['p', 'div'], recursive=False)
-                # 再次過濾無效 div
                 paragraphs = [p for p in paragraphs if len(p.get_text(strip=True)) > 0]
 
         # HK01
@@ -247,23 +236,12 @@ def fetch_full_article(url, summary_fallback=""):
 
         # --- 2. 通用智慧抓取 ---
         if not paragraphs:
-            # 尋找文字最密集的區塊
-            candidates = soup.find_all(['div', 'article', 'section'])
-            best_div = None
-            max_len = 0
-            for div in candidates:
-                text = div.get_text(strip=True)
-                if len(text) > max_len and len(div.find_all('a')) < 10: # 排除連結太多的區塊 (可能是選單)
-                    max_len = len(text)
-                    best_div = div
-            
-            if best_div:
-                paragraphs = best_div.find_all('p')
-                if not paragraphs: # 如果沒有 p，直接取文字
-                     raw_text = best_div.get_text(separator="\n")
-                     lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
-                     return "\n\n".join(lines), real_time
-
+            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content', 'body']))
+            if content_area:
+                paragraphs = content_area.find_all(['p', 'div'], recursive=False)
+                if not paragraphs:
+                    paragraphs = content_area.find_all('p')
+        
         # --- 3. 兜底方案 ---
         if not paragraphs:
             paragraphs = soup.find_all('p')
@@ -271,14 +249,12 @@ def fetch_full_article(url, summary_fallback=""):
         clean_text = []
         for p in paragraphs:
             text = p.get_text().strip()
-            # 過濾太短的行
             if len(text) > 5 and "Copyright" not in text and "版權所有" not in text and "點擊閱讀" not in text:
                 clean_text.append(text)
 
         if not clean_text:
             return summary_fallback if summary_fallback else "(無法自動提取全文，可能受限於付費牆或動態載入)", real_time
             
-        # 使用 \n\n 作為分隔符，創造空行效果
         full_text = "\n\n".join(clean_text)
         return full_text, real_time
 
@@ -300,7 +276,6 @@ def is_new_news(timestamp):
 
 # --- 3. 抓取邏輯 (並行處理) ---
 
-# show_spinner=False 避免每次自動刷新都轉圈圈
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_google_proxy(site_query, site_name, color, limit=10):
     query = urllib.parse.quote(site_query)
@@ -463,6 +438,16 @@ def show_txt_preview(txt_content):
         st.session_state.show_preview = False
         st.rerun()
 
+# --- 這裡開始是數據獲取與變數宣告，必須在 Sidebar 之前執行 ---
+# 這樣 Sidebar 內的按鈕邏輯才能存取到 all_flat_news
+
+# 1. 先抓取數據
+# 雖然 news_limit 在 sidebar 定義，但因為 Streamlit 的執行順序，
+# 我們可以先給個預設值，或者將 sidebar 的 slider 移到這裡?
+# 不，為了 UI 順序，我們必須先定義 sidebar。
+# 但是 button logic 依賴 data。
+# 解決方案：將 Button 邏輯放到數據獲取之後，但使用 st.sidebar.button 讓它顯示在側邊欄。
+
 with st.sidebar:
     st.header("⚙️ 控制台")
     st.caption(f"更新時間: {datetime.datetime.now(HK_TZ).strftime('%H:%M:%S')}")
@@ -478,24 +463,27 @@ with st.sidebar:
     
     select_count = len(st.session_state.selected_links)
     st.metric("已選新聞", f"{select_count} 篇")
-    
-    if st.button("📄 生成 TXT 內容", type="primary", use_container_width=True):
-        if select_count == 0:
-            st.warning("請先勾選新聞！")
-        else:
-            st.session_state.show_preview = True
-            st.rerun()
+
+    # 注意：這裡只放置按鈕的佔位，邏輯移到下方
+    generate_btn = st.button("📄 生成 TXT 內容", type="primary", use_container_width=True)
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
-# 抓取資料 (傳入滑桿的數值)
+# 2. 獲取數據
 news_data_map, source_configs = get_all_news_data_parallel(news_limit)
-
 all_flat_news = []
 for name, items in news_data_map.items():
     all_flat_news.extend(items)
 
-# 處理生成邏輯 (在主流程中執行)
+# 3. 執行生成按鈕邏輯 (現在有數據了)
+if generate_btn:
+    if select_count == 0:
+        st.sidebar.warning("請先勾選新聞！")
+    else:
+        st.session_state.show_preview = True
+        st.rerun()
+
+# 4. 處理彈窗顯示
 if st.session_state.show_preview:
     if not st.session_state.generated_text:
         with st.spinner("正在提取全文..."):
@@ -517,6 +505,7 @@ if st.session_state.show_preview:
     
     show_txt_preview(st.session_state.generated_text)
 
+# 5. 主畫面渲染
 st.title("Tommy Sir 後援會之新聞監察系統")
 
 cols_per_row = 4
@@ -548,17 +537,18 @@ for row in rows:
                     
                     c1, c2 = st.columns([0.15, 0.85])
                     with c1:
-                        def update_state(k=link):
-                            if k in st.session_state.selected_links:
-                                st.session_state.selected_links.remove(k)
-                            else:
+                        # 使用固定唯一的 key (link)
+                        unique_key = f"chk_{link}"
+                        def update_state(k=link, u_k=unique_key):
+                            if st.session_state[u_k]:
                                 st.session_state.selected_links.add(k)
-                        st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_state)
+                            else:
+                                st.session_state.selected_links.discard(k)
+                        
+                        st.checkbox("", key=unique_key, value=is_selected, on_change=update_state)
                     with c2:
-                        # CSS hover 隱藏 new badge
                         new_badge_html = f'<span class="new-badge">NEW!</span>' if is_new else ''
                         text_style = 'class="read-text"' if is_selected else ""
-                        
                         item_html = f"""<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{item['title']}</a><div class="news-time">{item['time_str']}</div></div>"""
                         st.markdown(item_html, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
