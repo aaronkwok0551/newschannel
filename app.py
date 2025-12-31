@@ -352,6 +352,14 @@ def show_txt_preview(txt_content):
     if st.button("關閉視窗"):
         st.rerun()
 
+def clear_all_selections():
+    st.session_state.selected_links.clear()
+    st.session_state.generated_text = ""
+    # 強制刪除所有 checkbox 的 session state 記錄
+    keys_to_clear = [key for key in st.session_state.keys() if key.startswith("chk_")]
+    for key in keys_to_clear:
+        del st.session_state[key]
+
 with st.sidebar:
     st.header("⚙️ 控制台")
     st.caption(f"更新時間: {datetime.datetime.now(HK_TZ).strftime('%H:%M:%S')}")
@@ -370,17 +378,13 @@ with st.sidebar:
     st.metric("已選新聞", f"{select_count} 篇")
     
     if st.button("📄 生成 TXT 內容", type="primary", use_container_width=True):
-        # ... (生成邏輯不變，省略以節省空間，與前一版相同) ...
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
             # 這裡需要 all_flat_news，稍後在主邏輯獲取
-            # 由於這是 callback 內，我們需要在主邏輯執行後才能拿到數據
-            # 為簡單起見，Streamlit 每次 rerun 都會執行主邏輯，所以這裡會有變數
             pass 
 
-    if st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=lambda: [st.session_state.selected_links.clear(), [st.session_state.pop(k) for k in list(st.session_state.keys()) if k.startswith("chk_")]]):
-        st.rerun()
+    st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
 # 抓取資料 (傳入滑桿的數值)
 news_data_map, source_configs = get_all_news_data_parallel(news_limit)
