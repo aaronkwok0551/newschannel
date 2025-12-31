@@ -80,6 +80,7 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Referer': 'https://www-d-google-d-com-s-gmn.tuangouai.com/'
 }
 
 # --- 2. 核心功能函式 ---
@@ -93,55 +94,81 @@ def resolve_google_url(url):
         return url
     
     try:
-        # Google News 需要 Cookies 才能正確跳轉
+        # Google News 需要 Cookies 才能正確跳轉，使用 Session
         session = requests.Session()
         session.headers.update(HEADERS)
         # 訪問頁面，允許跳轉
-        r = session.get(url, allow_redirects=True, timeout=8)
+        r = session.get(url, allow_redirects=True, timeout=10)
         return r.url
     except:
         return url
 
 def fetch_full_article(url):
-    """ 抓取新聞正文 (針對不同網站優化) """
+    """ 抓取新聞正文 (針對特定網站深度優化) """
     try:
-        r = requests.get(url, headers=HEADERS, timeout=8)
-        r.encoding = 'utf-8' # 自動檢測編碼通常比較好，但中文網頁utf-8居多
+        # 嘗試連線
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        
+        # 處理編碼問題 (解決中文亂碼)
+        if r.encoding == 'ISO-8859-1':
+            r.encoding = r.apparent_encoding
+            
         soup = BeautifulSoup(r.text, 'html.parser')
         
         # 移除干擾元素
-        for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button']):
+        for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', '.ad', '.advertisement']):
             tag.decompose()
 
-        # --- 針對特定網站的抓取邏輯 ---
         paragraphs = []
+        
+        # --- 針對特定網站的抓取邏輯 ---
         
         # 1. 政府新聞網 (Info.gov.hk)
         if "info.gov.hk" in url:
-            # 政府新聞稿通常在 id="pressrelease" 或 class="content"
-            content_div = soup.find(id="pressrelease") or soup.find(class_="content")
+            # 嘗試抓取主要內容區塊
+            content_div = soup.find(id="pressrelease") or soup.find(class_="content") or soup.find(id="content")
+            if content_div:
+                # 政府新聞稿有時直接用 span 或 text node，不一定有 p
+                text_content = content_div.get_text(separator="\n")
+                lines = [line.strip() for line in text_content.split('\n') if line.strip()]
+                return "\n\n".join(lines)
+
+        # 2. 香港電台 (RTHK)
+        elif "rthk.hk" in url:
+            content_div = soup.find(class_="itemFullText") or soup.find(class_="news-content")
+            if content_div:
+                paragraphs = content_div.find_all(['p', 'div'], recursive=False)
+                if not paragraphs: # 如果沒有標籤，直接取字
+                    return content_div.get_text(separator="\n\n").strip()
+
+        # 3. 東網 (on.cc)
+        elif "on.cc" in url:
+            # 東網結構較亂，嘗試多個常見 class
+            content_div = soup.find(class_="breakingNewsContent") or soup.find(class_="news_content") or soup.find(class_="ct_cnt")
             if content_div:
                 paragraphs = content_div.find_all('p')
-        
-        # 2. 一般新聞網站 (智慧判斷)
+                # 有些東網頁面沒有 p 標籤，直接在 div 裡
+                if not paragraphs:
+                    return content_div.get_text(separator="\n\n").strip()
+
+        # 4. 通用/Google 轉址後 (智慧判斷)
         if not paragraphs:
-            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text']))
+            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'p-article']))
             if content_area:
                 paragraphs = content_area.find_all(['p'], recursive=False)
-                # 如果第一層沒 p，找下一層
                 if not paragraphs:
                     paragraphs = content_area.find_all('p')
         
-        # 3. 兜底方案
+        # 5. 兜底方案 (抓所有 p)
         if not paragraphs:
             paragraphs = soup.find_all('p')
 
-        # 過濾垃圾內容
+        # 過濾與組合
         clean_text = []
         for p in paragraphs:
             text = p.get_text().strip()
-            # 排除太短的行、版權聲明等
-            if len(text) > 10 and "Copyright" not in text and "版權所有" not in text:
+            # 放寬長度限制，以免漏掉短句
+            if len(text) > 1 and "Copyright" not in text and "版權所有" not in text:
                 clean_text.append(text)
 
         if not clean_text:
@@ -293,7 +320,7 @@ def get_all_news_data_parallel():
     results_map = {}
     
     # 使用 ThreadPoolExecutor 進行並行抓取
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
         future_to_source = {executor.submit(fetch_single_source, conf): conf for conf in configs}
         for future in concurrent.futures.as_completed(future_to_source):
             try:
