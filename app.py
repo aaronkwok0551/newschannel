@@ -39,10 +39,22 @@ st.markdown("""
         animation: blinker 1.5s ease-in-out infinite;
         margin-right: 5px;
         font-size: 0.75em;
+        display: inline-block;
+        vertical-align: middle;
     }
     
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
-    a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; }
+    
+    /* 連結樣式優化 */
+    a { 
+        text-decoration: none; 
+        color: #334155; 
+        font-weight: 600; 
+        transition: 0.2s; 
+        font-size: 0.95em; 
+        line-height: 1.4;
+        display: inline;
+    }
     a:hover { color: #2563eb; }
     
     .news-source-header { 
@@ -61,9 +73,21 @@ st.markdown("""
         padding-bottom: 5px; height: 100%;
     }
 
-    .news-item-row { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; transition: background-color 0.1s; }
+    .news-item-row { 
+        padding: 10px 12px; 
+        border-bottom: 1px solid #f1f5f9; 
+        transition: background-color 0.1s; 
+    }
     .news-item-row:hover { background-color: #f8fafc; }
     .news-item-row:last-child { border-bottom: none; }
+    
+    /* 時間樣式 */
+    .news-time {
+        font-size: 0.8em; 
+        color: #94a3b8; 
+        margin-top: 4px;
+        display: block;
+    }
     
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
@@ -134,7 +158,7 @@ def fetch_google_proxy(site_query, site_name, color):
         feed = feedparser.parse(rss_url)
         news_list = []
         for entry in feed.entries[:10]:
-            title = entry.title.rsplit(" - ", 1)[0]
+            title = entry.title.rsplit(" - ", 1)[0].strip()
             dt_str = "最新"
             if hasattr(entry, 'published_parsed'):
                 dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
@@ -148,7 +172,6 @@ def fetch_rss_or_api(config):
     data = []
     try:
         # 特別照料：Now 新聞 API (內部 JSON 接口)
-        # 修正：匹配 config['type'] == 'now_api'
         if config['type'] == 'now_api':
              api_url = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1"
              r = requests.get(api_url, headers=HEADERS, timeout=8)
@@ -160,7 +183,7 @@ def fetch_rss_or_api(config):
                      if k in data_list and isinstance(data_list[k], list):
                          items_list = data_list[k]; break
              for item in items_list[:10]:
-                 title = item.get('newsTitle') or item.get('title')
+                 title = (item.get('newsTitle') or item.get('title') or "").strip()
                  news_id = item.get('newsId')
                  link = f"https://news.now.com/home/local/player?newsId={news_id}" if news_id else ""
                  pub_date = item.get('publishDate')
@@ -173,7 +196,7 @@ def fetch_rss_or_api(config):
                  if title and link:
                     data.append({'source': config['name'], 'title': title, 'link': link, 'time': dt_str, 'color': config['color'], 'method': 'API'})
 
-        # 通用 RSS 處理 (官方 RSS + RSSHub)
+        # 通用 RSS 處理
         elif config['type'] == 'rss':
             r = requests.get(config['url'], headers=HEADERS, timeout=8)
             feed = feedparser.parse(r.content)
@@ -182,9 +205,9 @@ def fetch_rss_or_api(config):
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
                     dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
-                title = entry.title
+                title = entry.title.strip()
                 if "news.google.com" in config['url']:
-                    title = title.rsplit(' - ', 1)[0]
+                    title = title.rsplit(' - ', 1)[0].strip()
                 data.append({'source': config['name'], 'title': title, 'link': entry.link, 'time': dt_str, 'color': config['color'], 'method': 'RSS'})
 
     except Exception as e:
@@ -198,35 +221,30 @@ def fetch_rss_or_api(config):
 
 @st.cache_data(ttl=60)
 def get_all_news_data():
-    """ 定義所有新聞源 (使用您指定的清單) """
+    """ 定義所有新聞源 """
     RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app" 
-    
-    # 修正了您代碼中的空格問題：戰時炸彈when -> 戰時炸彈 when
     ANTIDRUG_RSS = "https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+保安局+OR+鄧炳強+OR+戰時炸彈+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
 
-    # 您提供的 12 個來源 + 禁毒新聞 (共 13 個)
     configs = [
-        # 特殊：禁毒新聞 (放第一位)
+        # 第一行 (4個)
         {"name": "禁毒/海關新聞", "type": "rss", "url": ANTIDRUG_RSS, "color": "#D946EF", 'backup_query': 'site:news.google.com 毒品'},
-
-        # 您提供的列表
         {"name": "政府新聞（中文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_zh.xml", "color": "#E74C3C", 'backup_query': 'site:info.gov.hk'},
         {"name": "政府新聞（英文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_en.xml", "color": "#C0392B", 'backup_query': 'site:info.gov.hk'},
         {"name": "RTHK", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800", 'backup_query': 'site:news.rthk.hk'},
         
-        # Now 新聞 (API 特別照料)
+        # 第二行 (4個)
         {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A", 'backup_query': 'site:news.now.com/home/local'},
-        
-        # 使用 RSSHub
         {"name": "HK01", "type": "rss", "url": f"{RSSHUB_BASE}/hk01/latest", "color": "#2563EB", 'backup_query': 'site:hk01.com'},
         {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news", "color": "#7C3AED", 'backup_query': 'site:hk.on.cc'},
-        
-        # 其他官方或 RSSHub
         {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316", 'backup_query': 'site:stheadline.com'},
+        
+        # 第三行 (4個)
         {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
         {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7", 'backup_query': 'site:i-cable.com'},
         {"name": "經濟日報", "type": "rss", "url": "https://www.hket.com/rss/hongkong", "color": "#7C3AED", 'backup_query': 'site:hket.com'},
         {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index", "color": "#64748B", 'backup_query': 'site:hkej.com'},
+        
+        # 巴士的報 (額外)
         {"name": "巴士的報", "type": "rss", "url": "https://www.bastillepost.com/hongkong/feed", "color": "#7C3AED", 'backup_query': 'site:bastillepost.com'},
     ]
 
@@ -323,6 +341,8 @@ for row in rows:
                     link = item['link']
                     is_new = is_new_news(item['time'])
                     is_selected = link in st.session_state.selected_links
+                    
+                    # 使用一行式的 Markdown 生成 HTML，避免縮排導致的空白問題
                     c1, c2 = st.columns([0.15, 0.85])
                     with c1:
                         def update_state(k=link):
@@ -334,13 +354,7 @@ for row in rows:
                     with c2:
                         new_tag = '<span class="new-badge">NEW!</span>' if is_new else ''
                         text_style = 'class="read-text"' if is_selected else ""
-                        st.markdown(f"""
-                            <div class="news-item-row">
-                                {new_tag}
-                                <a href="{link}" target="_blank" {text_style}>
-                                    {item['title']}
-                                </a><br>
-                                <span style="font-size:0.8em; color:#888;">{item['time']}</span>
-                            </div>
-                        """, unsafe_allow_html=True)
+                        # HTML string compacted to avoid extra spaces
+                        item_html = f'<div class="news-item-row">{new_tag}<a href="{link}" target="_blank" {text_style}>{item["title"]}</a><div class="news-time">{item["time"]}</div></div>'
+                        st.markdown(item_html, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
