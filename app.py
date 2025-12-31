@@ -46,7 +46,6 @@ st.markdown("""
         transition: opacity 0.3s ease;
     }
 
-    /* 關鍵修改：使用 CSS hover 來隱藏 NEW 標籤 */
     .news-item-row:hover .new-badge {
         opacity: 0;
     }
@@ -154,7 +153,7 @@ def extract_time_from_html(soup):
 def fetch_full_article(url, summary_fallback=""):
     """ 
     針對香港各大媒體優化的全文抓取器 
-    目標：抓取真實內文，並移除多餘空行
+    目標：抓取真實內文，段落間保留空行
     """
     if "news.google.com" in url or "google.com" in url:
         return summary_fallback if summary_fallback else "(連結還原失敗，請點擊連結查看)", None
@@ -166,7 +165,7 @@ def fetch_full_article(url, summary_fallback=""):
         
         real_time = extract_time_from_html(soup)
         
-        # 移除干擾元素 (廣告、選單、推薦閱讀等)
+        # 移除干擾元素
         for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', 'input', '.ad', '.advertisement', '.related-news', '.hidden']):
             tag.decompose()
 
@@ -178,20 +177,18 @@ def fetch_full_article(url, summary_fallback=""):
         if "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content") or soup.find(id="content")
             if content_div:
-                # 處理政府新聞稿特殊的 span 排版
                 text_spans = content_div.find_all('span', style=lambda x: x and 'font-size' in x)
                 if text_spans:
                     raw_text = "\n".join([s.get_text() for s in text_spans])
                 else:
                     raw_text = content_div.get_text(separator="\n")
                 
-                # 關鍵修改：過濾空行，並使用單一換行符 \n 連結
+                # 使用 \n\n 確保段落間有空行
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
-                return "\n".join(lines), real_time
+                return "\n\n".join(lines), real_time
 
         # HK01
         elif "hk01.com" in url:
-            # 常見 class: article-grid__content-section, article-content
             content_div = soup.find('div', class_=re.compile(r'article-content|article_content'))
             if content_div:
                 paragraphs = content_div.find_all(['p', 'div'], recursive=False)
@@ -204,7 +201,7 @@ def fetch_full_article(url, summary_fallback=""):
                 if not paragraphs:
                     raw_text = content_div.get_text(separator="\n")
                     lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
-                    return "\n".join(lines), real_time
+                    return "\n\n".join(lines), real_time
 
         # 明報 Mingpao
         elif "mingpao.com" in url:
@@ -232,35 +229,31 @@ def fetch_full_article(url, summary_fallback=""):
                 if not paragraphs:
                     raw_text = content_div.get_text(separator="\n")
                     lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
-                    return "\n".join(lines), real_time
+                    return "\n\n".join(lines), real_time
 
-        # --- 2. 通用智慧抓取 (如果上面沒命中) ---
+        # --- 2. 通用智慧抓取 ---
         if not paragraphs:
-            # 搜尋常見的新聞內文容器名稱
             content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content']))
             if content_area:
                 paragraphs = content_area.find_all(['p'], recursive=False)
                 if not paragraphs:
                     paragraphs = content_area.find_all('p')
         
-        # --- 3. 兜底方案 (抓頁面所有 P) ---
+        # --- 3. 兜底方案 ---
         if not paragraphs:
             paragraphs = soup.find_all('p')
 
-        # 內容清洗與組合
         clean_text = []
         for p in paragraphs:
             text = p.get_text().strip()
-            # 過濾太短的行 (例如 "記者：XXX") 或版權宣告
             if len(text) > 5 and "Copyright" not in text and "版權所有" not in text and "點擊閱讀" not in text:
                 clean_text.append(text)
 
         if not clean_text:
-            # 真的抓不到才用 RSS 摘要
             return summary_fallback if summary_fallback else "(無法自動提取全文，可能受限於付費牆或動態載入)", real_time
             
-        # 關鍵修改：使用單一換行符 \n 連結，避免空行過多
-        full_text = "\n".join(clean_text)
+        # 使用 \n\n 作為分隔符，創造空行效果
+        full_text = "\n\n".join(clean_text)
         return full_text, real_time
 
     except Exception as e:
@@ -419,6 +412,10 @@ def get_all_news_data_parallel(limit=10):
 
 if 'selected_links' not in st.session_state:
     st.session_state.selected_links = set()
+if 'show_preview' not in st.session_state:
+    st.session_state.show_preview = False
+if 'generated_text' not in st.session_state:
+    st.session_state.generated_text = ""
 
 # --- 5. UI 佈局 ---
 
@@ -434,6 +431,7 @@ def clear_all_selections():
 def show_txt_preview(txt_content):
     st.text_area("內容 (可全選複製)：", value=txt_content, height=500)
     if st.button("關閉視窗"):
+        st.session_state.show_preview = False
         st.rerun()
 
 with st.sidebar:
@@ -456,22 +454,9 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
-            with st.spinner("正在提取全文..."):
-                final_txt = ""
-                targets = [n for n in all_flat_news if n['link'] in st.session_state.selected_links]
-                targets.sort(key=lambda x: x['timestamp'], reverse=True)
-                
-                for item in targets:
-                    real_link = resolve_google_url(item['link'])
-                    content, real_time = fetch_full_article(real_link, item.get('summary', ''))
-                    display_time = real_time if real_time else item['time_str']
-                    
-                    final_txt += f"{item['source']}：{item['title']}\n"
-                    final_txt += f"[{display_time}]\n\n"
-                    final_txt += f"{content}\n\n"
-                    final_txt += f"{real_link}\n\n"
-                    final_txt += "Ends\n\n"
-                show_txt_preview(final_txt)
+            # 這裡只設置狀態，不進行耗時操作
+            st.session_state.show_preview = True
+            st.rerun()
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
@@ -482,11 +467,10 @@ all_flat_news = []
 for name, items in news_data_map.items():
     all_flat_news.extend(items)
 
-# 處理生成按鈕邏輯 (放在數據準備好之後)
-if st.sidebar.button("📄 生成 TXT 內容 (執行)", type="primary", use_container_width=True, key="gen_btn_real"):
-     if select_count == 0:
-        st.sidebar.warning("請先勾選新聞！")
-     else:
+# 處理生成邏輯 (在主流程中執行)
+if st.session_state.show_preview:
+    # 只有當文字還沒生成過，或者需要重新生成時才執行
+    if not st.session_state.generated_text:
         with st.spinner("正在提取全文..."):
             final_txt = ""
             targets = [n for n in all_flat_news if n['link'] in st.session_state.selected_links]
@@ -502,7 +486,9 @@ if st.sidebar.button("📄 生成 TXT 內容 (執行)", type="primary", use_cont
                 final_txt += f"{content}\n\n"
                 final_txt += f"{real_link}\n\n"
                 final_txt += "Ends\n\n"
-            show_txt_preview(final_txt)
+            st.session_state.generated_text = final_txt
+    
+    show_txt_preview(st.session_state.generated_text)
 
 st.title("Tommy Sir 後援會之新聞監察系統")
 
