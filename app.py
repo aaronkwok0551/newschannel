@@ -11,7 +11,6 @@ import sys
 from streamlit_autorefresh import st_autorefresh
 import concurrent.futures
 import re
-import json
 
 # 設定預設編碼
 try:
@@ -29,7 +28,7 @@ st.set_page_config(
 # 自動刷新 (每 60 秒)
 st_autorefresh(interval=60 * 1000, limit=None, key="news_autoupdate")
 
-# --- CSS 樣式 (Clean Style) ---
+# --- CSS 樣式 ---
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
@@ -91,10 +90,7 @@ def chunked(lst, n):
     return [lst[i:i + n] for i in range(0, len(lst), n)]
 
 def resolve_google_url(url):
-    """ 
-    模擬瀏覽器行為還原 Google News 真實連結 
-    通過解析 Google 中間頁的 JavaScript 來獲取目標網址
-    """
+    """ 強力還原 Google News 真實連結 (增強版) """
     if "news.google.com" not in url:
         return url
     
@@ -102,32 +98,28 @@ def resolve_google_url(url):
         session = requests.Session()
         session.headers.update(HEADERS)
         
-        # 1. 請求 Google 頁面
+        # 1. 嘗試直接訪問，允許跳轉
         r = session.get(url, allow_redirects=True, timeout=10)
         
-        # 如果已經直接跳轉成功
+        # 如果跳轉後的網址已經不是 google，成功
         if "news.google.com" not in r.url and "google.com" not in r.url:
             return r.url
             
-        # 2. 如果卡在中間頁，解析 HTML 找尋跳轉目標
-        # Google 通常會在 JS 中寫 window.location.replace("TARGET_URL")
-        # 或者在 data-n-url 屬性中
+        # 2. 解析 Google 中間頁
         html_content = r.text
+        soup = BeautifulSoup(html_content, 'html.parser')
         
-        # 嘗試匹配常見的 JS 跳轉模式
-        # 模式 1: window.location.replace
+        # 嘗試尋找帶有 data-n-url 的連結 (常見於 Google News)
+        link_with_data = soup.find('a', attrs={'data-n-url': True})
+        if link_with_data:
+            return link_with_data['data-n-url']
+
+        # 嘗試尋找 JS 跳轉
         match = re.search(r'window\.location\.replace\("(.+?)"\)', html_content)
         if match:
             return match.group(1).encode('utf-8').decode('unicode_escape')
             
-        # 模式 2: data-n-url (常見於按鈕)
-        soup = BeautifulSoup(html_content, 'html.parser')
-        link_tag = soup.find('a', attrs={'data-n-url': True})
-        if link_tag:
-            return link_tag['data-n-url']
-            
-        # 模式 3: 普通的 <a href="...">Click here</a>
-        # 排除 google 自己的連結
+        # 嘗試尋找主要連結
         links = soup.find_all('a', href=True)
         for link in links:
             href = link['href']
@@ -141,7 +133,6 @@ def resolve_google_url(url):
 def extract_time_from_html(soup):
     """ 嘗試從 HTML Meta Data 中提取真實發佈時間 """
     try:
-        # 常見的 Meta Tag 時間屬性
         meta_tags = [
             {'property': 'article:published_time'},
             {'property': 'og:updated_time'},
@@ -154,10 +145,7 @@ def extract_time_from_html(soup):
         for tag in meta_tags:
             meta = soup.find('meta', attrs=tag)
             if meta and meta.get('content'):
-                # 簡單解析 ISO 格式日期 (如 2025-12-31T10:00:00+08:00)
                 dt_str = meta['content']
-                # 嘗試擷取年月日時分
-                # 這裡做一個簡單的字串擷取，適用於 ISO 格式
                 if 'T' in dt_str:
                     return dt_str.replace('T', ' ').split('+')[0][:16]
                 return dt_str[:16]
@@ -166,49 +154,66 @@ def extract_time_from_html(soup):
         return None
 
 def fetch_full_article(url):
-    """ 抓取新聞正文 + 嘗試修正時間 """
-    real_time = None
-    
-    # 如果連結還是 google，表示還原失敗，無法抓取
+    """ 抓取新聞正文 (針對不同網站優化) """
     if "news.google.com" in url or "google.com" in url:
-        return "(連結還原失敗，無法抓取內文)", None
+        return "(連結還原失敗，無法抓取內文)"
 
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(url, headers=HEADERS, timeout=8)
         r.encoding = r.apparent_encoding 
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        # 嘗試提取真實時間
         real_time = extract_time_from_html(soup)
         
-        # 移除干擾元素
         for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', 'input', '.ad']):
             tag.decompose()
 
         paragraphs = []
         
         # --- 針對特定網站的抓取邏輯 ---
-        if "info.gov.hk" in url:
+        
+        # 1. RTHK (香港電台)
+        if "rthk.hk" in url:
+            content_div = soup.find(class_="itemFullText")
+            if content_div:
+                paragraphs = content_div.find_all('p')
+                # 有些 RTHK 頁面直接文字在 div 裡
+                if not paragraphs:
+                    return content_div.get_text(separator="\n\n").strip(), real_time
+
+        # 2. 政府新聞網 (Info.gov.hk)
+        elif "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content")
             if content_div:
                 raw_text = content_div.get_text(separator="\n")
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
-        # 智慧判斷文章區塊
-        content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry']))
+        # 3. 東網 (on.cc)
+        elif "on.cc" in url:
+            content_div = soup.find(class_="breakingNewsContent") or soup.find(class_="news_content")
+            if content_div:
+                paragraphs = content_div.find_all('p')
+                if not paragraphs:
+                    # 如果沒有 p，嘗試處理 br
+                    text = content_div.get_text(separator="\n\n")
+                    return text.strip(), real_time
+
+        # 4. 通用智慧判斷
+        if not paragraphs:
+            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry']))
+            if content_area:
+                paragraphs = content_area.find_all(['p'], recursive=False)
+                if not paragraphs:
+                    paragraphs = content_area.find_all('p')
         
-        if content_area:
-            paragraphs = content_area.find_all(['p'], recursive=False)
-            if not paragraphs:
-                paragraphs = content_area.find_all('p')
-        else:
+        if not paragraphs:
             paragraphs = soup.find_all('p')
 
         clean_text = []
         for p in paragraphs:
             text = p.get_text().strip()
-            if len(text) > 5 and "Copyright" not in text:
+            if len(text) > 5 and "Copyright" not in text and "版權所有" not in text:
                 clean_text.append(text)
 
         if not clean_text:
@@ -235,7 +240,7 @@ def is_new_news(timestamp):
 # --- 3. 抓取邏輯 (並行處理) ---
 
 def fetch_google_proxy(site_query, site_name, color):
-    """ Google News 代理 """
+    """ Plan B: Google News 代理 """
     query = urllib.parse.quote(site_query)
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
     try:
@@ -372,6 +377,15 @@ for name, items in news_data_map.items():
 
 # --- 5. UI 佈局 ---
 
+# 這裡修改了 clear_all_selections 函數，使其在 on_click 時執行
+def clear_all_selections():
+    st.session_state.selected_links.clear()
+    st.session_state.generated_text = ""
+    # 強制清除所有 checkbox 的 key
+    keys_to_delete = [key for key in st.session_state.keys() if key.startswith("chk_")]
+    for key in keys_to_delete:
+        del st.session_state[key]
+
 @st.dialog("📄 生成結果預覽")
 def show_txt_preview(txt_content):
     st.text_area("內容 (可全選複製)：", value=txt_content, height=500)
@@ -398,12 +412,8 @@ with st.sidebar:
                 targets.sort(key=lambda x: x['timestamp'], reverse=True)
                 
                 for item in targets:
-                    # 1. 模擬瀏覽器還原連結
                     real_link = resolve_google_url(item['link'])
-                    # 2. 抓取全文 + 修正時間
                     content, real_time = fetch_full_article(real_link)
-                    
-                    # 優先使用從網頁抓到的真實時間，如果沒有則使用列表時間
                     display_time = real_time if real_time else item['time_str']
                     
                     final_txt += f"{item['source']}：{item['title']}\n"
@@ -413,14 +423,8 @@ with st.sidebar:
                     final_txt += "Ends\n\n"
                 show_txt_preview(final_txt)
 
-    if st.button("🗑️ 一鍵清空選擇", use_container_width=True):
-        st.session_state.selected_links.clear()
-        st.session_state.pop("generated_text", None)
-        # 強制重置所有 Checkbox
-        for key in list(st.session_state.keys()):
-            if key.startswith("chk_"):
-                del st.session_state[key]
-        st.rerun()
+    # 綁定 callback 函數
+    st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
 st.title("Tommy Sir 後援會之新聞監察系統")
 
