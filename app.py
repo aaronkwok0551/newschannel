@@ -80,6 +80,9 @@ st.markdown("""
     div[data-testid="column"] { display: flex; align-items: start; }
     div[data-testid="stDialog"] { border-radius: 15px; }
     .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
+    
+    div.block-container { min-height: 100vh; }
+    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -87,11 +90,19 @@ st.markdown("""
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
 UTC_TZ = pytz.timezone('UTC')
 
+# 升級版 Headers (模擬真實瀏覽器，防止被擋)
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Cookie': 'CONSENT=YES+cb.20210720-07-p0.en+FX+417; '
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Cache-Control': 'max-age=0',
 }
 
 # --- 2. 核心功能函式 ---
@@ -158,14 +169,16 @@ def fetch_full_article(url, summary_fallback=""):
         return summary_fallback if summary_fallback else "(連結還原失敗，請點擊連結查看)", None
 
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15) # 增加 timeout
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        r = session.get(url, timeout=15) # 增加 timeout
         r.encoding = r.apparent_encoding 
         soup = BeautifulSoup(r.text, 'html.parser')
         
         real_time = extract_time_from_html(soup)
         
         # 移除干擾元素
-        for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', 'input', '.ad', '.advertisement', '.related-news', '.hidden', '.copyright']):
+        for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', 'input', '.ad', '.advertisement', '.related-news', '.hidden', '.copyright', '.share-bar', '.video-player', '.recommendation']):
             tag.decompose()
 
         paragraphs = []
@@ -181,22 +194,18 @@ def fetch_full_article(url, summary_fallback=""):
                     raw_text = "\n".join([s.get_text() for s in text_spans])
                 else:
                     raw_text = content_div.get_text(separator="\n")
-                
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
-        # 星島 Stheadline (加強版：抓取 div.paragraph)
+        # 星島 Stheadline (修正邏輯)
         elif "stheadline.com" in url:
-            # 星島的正文可能在多種 class 中
-            content_div = soup.find('div', class_='paragraph-content') or \
-                          soup.find('div', class_='article-content') or \
-                          soup.find('section', class_='article-body')
-            
+            # 星島的正文容器
+            content_div = soup.find('div', class_='paragraph') or soup.find('div', class_='article-content') or soup.find('section', class_='article-body')
             if content_div:
-                # 星島有時用 div 包裹文字，不一定是 p
+                # 抓取 p 和 div (星島有時用 div 當段落)
                 paragraphs = content_div.find_all(['p', 'div'], recursive=False)
-                # 過濾掉可能是廣告的 div
-                paragraphs = [p for p in paragraphs if not p.find('div', class_='related-item')]
+                # 再次過濾無效 div
+                paragraphs = [p for p in paragraphs if len(p.get_text(strip=True)) > 0]
 
         # HK01
         elif "hk01.com" in url:
@@ -238,11 +247,23 @@ def fetch_full_article(url, summary_fallback=""):
 
         # --- 2. 通用智慧抓取 ---
         if not paragraphs:
-            # 擴大範圍，包含 article-body 等常見 class
-            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content', 'body']))
-            if content_area:
-                paragraphs = content_area.find_all(['p', 'div'], recursive=False)
-        
+            # 尋找文字最密集的區塊
+            candidates = soup.find_all(['div', 'article', 'section'])
+            best_div = None
+            max_len = 0
+            for div in candidates:
+                text = div.get_text(strip=True)
+                if len(text) > max_len and len(div.find_all('a')) < 10: # 排除連結太多的區塊 (可能是選單)
+                    max_len = len(text)
+                    best_div = div
+            
+            if best_div:
+                paragraphs = best_div.find_all('p')
+                if not paragraphs: # 如果沒有 p，直接取文字
+                     raw_text = best_div.get_text(separator="\n")
+                     lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
+                     return "\n\n".join(lines), real_time
+
         # --- 3. 兜底方案 ---
         if not paragraphs:
             paragraphs = soup.find_all('p')
@@ -250,14 +271,14 @@ def fetch_full_article(url, summary_fallback=""):
         clean_text = []
         for p in paragraphs:
             text = p.get_text().strip()
-            # 過濾太短的行或無效內容
-            if len(text) > 5 and "Copyright" not in text and "版權所有" not in text and "點擊閱讀" not in text and "相關新聞" not in text:
+            # 過濾太短的行
+            if len(text) > 5 and "Copyright" not in text and "版權所有" not in text and "點擊閱讀" not in text:
                 clean_text.append(text)
 
         if not clean_text:
             return summary_fallback if summary_fallback else "(無法自動提取全文，可能受限於付費牆或動態載入)", real_time
             
-        # 使用 \n\n 分隔段落
+        # 使用 \n\n 作為分隔符，創造空行效果
         full_text = "\n\n".join(clean_text)
         return full_text, real_time
 
@@ -277,8 +298,10 @@ def is_new_news(timestamp):
     except:
         return False
 
-# --- 3. 抓取邏輯 ---
+# --- 3. 抓取邏輯 (並行處理) ---
 
+# show_spinner=False 避免每次自動刷新都轉圈圈
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_google_proxy(site_query, site_name, color, limit=10):
     query = urllib.parse.quote(site_query)
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
@@ -311,6 +334,7 @@ def fetch_google_proxy(site_query, site_name, color, limit=10):
     except:
         return []
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_single_source(config, limit=10):
     data = []
     today_date = datetime.datetime.now(HK_TZ).date() 
@@ -459,7 +483,6 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
-            # 這裡只設置狀態，不進行耗時操作
             st.session_state.show_preview = True
             st.rerun()
 
@@ -474,7 +497,6 @@ for name, items in news_data_map.items():
 
 # 處理生成邏輯 (在主流程中執行)
 if st.session_state.show_preview:
-    # 只有當文字還沒生成過，或者需要重新生成時才執行
     if not st.session_state.generated_text:
         with st.spinner("正在提取全文..."):
             final_txt = ""
