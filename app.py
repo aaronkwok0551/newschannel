@@ -26,7 +26,7 @@ st.set_page_config(
 # 自動刷新 (每 60 秒)
 st_autorefresh(interval=60 * 1000, limit=None, key="news_autoupdate")
 
-# --- CSS 樣式 (Clean Style) ---
+# --- CSS 樣式 (Clean Style - 無框線清單風格) ---
 st.markdown("""
 <style>
     /* 全局背景 */
@@ -184,7 +184,34 @@ def is_new_news(time_str):
     except:
         return False
 
-# --- 3. 抓取邏輯 ---
+# --- 3. 雙重保險抓取機制 ---
+
+def fetch_google_proxy(site_query, site_name, color):
+    """ Plan B: Google News 代理模式 """
+    query = urllib.parse.quote(site_query)
+    rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
+    
+    try:
+        feed = feedparser.parse(rss_url)
+        news_list = []
+        for entry in feed.entries[:10]:
+            title = entry.title.rsplit(" - ", 1)[0]
+            dt_str = "最新"
+            if hasattr(entry, 'published_parsed'):
+                dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
+                dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
+            
+            news_list.append({
+                'source': site_name,
+                'title': title,
+                'link': entry.link,
+                'time': dt_str,
+                'color': color,
+                'method': 'Proxy' 
+            })
+        return news_list
+    except:
+        return []
 
 def fetch_rss_or_api(config):
     data = []
@@ -196,7 +223,7 @@ def fetch_rss_or_api(config):
              r = requests.get(api_url, headers=HEADERS, timeout=8)
              data_list = r.json()
              
-             # 處理 JSON 結構 (可能是 list 或 dict)
+             # 處理 JSON 結構
              items_list = []
              if isinstance(data_list, list):
                  items_list = data_list
@@ -235,7 +262,6 @@ def fetch_rss_or_api(config):
                     dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
                 
                 title = entry.title
-                
                 # 處理 Google News 標題後綴
                 if "news.google.com" in config['url']:
                     title = title.rsplit(' - ', 1)[0]
@@ -243,8 +269,12 @@ def fetch_rss_or_api(config):
                 data.append({'source': config['name'], 'title': title, 'link': entry.link, 'time': dt_str, 'color': config['color'], 'method': 'RSS'})
 
     except Exception as e:
-        # print(f"Error fetching {config['name']}: {e}") # Debug only
+        print(f"Error fetching {config['name']}: {e}")
         data = []
+
+    # --- Plan B (自動救援) ---
+    if not data and config.get('backup_query'):
+        data = fetch_google_proxy(config['backup_query'], config['name'], config['color'])
     
     return data
 
@@ -252,27 +282,34 @@ def fetch_rss_or_api(config):
 def get_all_news_data():
     """ 定義所有新聞源 """
     
-    # 您的 RSSHub 地址
+    # 您的私人 RSSHub 地址 (最重要！)
     RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app" 
     
+    # 禁毒新聞 Google RSS
+    ANTIDRUG_RSS = "https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+保安局+OR+鄧炳強+OR+戰時炸彈when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
+
     configs = [
         # 第一行 (4個)
-        {"name": "政府新聞（中文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_zh.xml", "color": "#E74C3C"},
-        {"name": "政府新聞（英文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_en.xml", "color": "#C0392B"},
-        {"name": "RTHK", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800"},
-        {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A"},
+        {"name": "政府新聞（中文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_zh.xml", "color": "#E74C3C", 'backup_query': 'site:info.gov.hk'},
+        {"name": "政府新聞（英文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_en.xml", "color": "#C0392B", 'backup_query': 'site:info.gov.hk'},
+        {"name": "RTHK", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800", 'backup_query': 'site:news.rthk.hk'},
+        {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A", 'backup_query': 'site:news.now.com/home/local'},
         
         # 第二行 (4個)
-        {"name": "HK01", "type": "rss", "url": f"{RSSHUB_BASE}/hk01/latest", "color": "#2563EB"},
-        {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news", "color": "#7C3AED"},
-        {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316"},
-        {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
+        {"name": "HK01", "type": "rss", "url": f"{RSSHUB_BASE}/hk01/latest", "color": "#2563EB", 'backup_query': 'site:hk01.com'},
+        {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news", "color": "#7C3AED", 'backup_query': 'site:hk.on.cc'},
+        {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316", 'backup_query': 'site:stheadline.com'},
+        {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
         
         # 第三行 (4個)
-        {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7"},
-        {"name": "經濟日報", "type": "rss", "url": "https://www.hket.com/rss/hongkong", "color": "#7C3AED"},
-        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index", "color": "#64748B"},
-        {"name": "巴士的報", "type": "rss", "url": "https://www.bastillepost.com/hongkong/feed", "color": "#7C3AED"},
+        {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7", 'backup_query': 'site:i-cable.com'},
+        {"name": "經濟日報", "type": "rss", "url": "https://www.hket.com/rss/hongkong", "color": "#7C3AED", 'backup_query': 'site:hket.com'},
+        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index", "color": "#64748B", 'backup_query': 'site:hkej.com'},
+        {"name": "巴士的報", "type": "rss", "url": "https://www.bastillepost.com/hongkong/feed", "color": "#7C3AED", 'backup_query': 'site:bastillepost.com'},
+        
+        # 額外加入禁毒新聞 (作為第13個，或您可以替換上面的某一個)
+        # 這裡我先把它加在最後，如果您想放第一行，請自行調整順序
+        {"name": "禁毒/海關新聞", "type": "rss", "url": ANTIDRUG_RSS, "color": "#D946EF"}, 
     ]
 
     results_map = {}
