@@ -1,7 +1,7 @@
-streamlit
-feedparser
-pytz
-beautifulsoup4
-python-dateutil
-streamlit-autorefresh
+streamlit>=1.34.0
 requests
+feedparser
+beautifulsoup4
+pytz
+lxml
+streamlit-autorefresh
