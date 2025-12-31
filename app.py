@@ -33,33 +33,34 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
-    @keyframes blinker { 
-        0% { opacity: 1; }
-        50% { opacity: 0.4; }
-        100% { opacity: 1; }
+    /* 防止重新載入時畫面跳動的關鍵 CSS */
+    div.block-container {
+        min-height: 100vh; /* 確保內容區域至少有螢幕高度，防止高度塌陷 */
     }
     
+    /* 強制顯示垂直捲軸，避免內容長度變化時畫面左右跳動 */
+    div[data-testid="stAppViewContainer"] {
+        overflow-y: scroll;
+    }
+    
+    @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
         color: #ef4444;
         font-weight: 800;
-        /* 閃爍動畫 */
         animation: blinker 1.5s ease-in-out infinite;
         margin-right: 5px;
         font-size: 0.75em;
         display: inline-block;
         vertical-align: middle;
         
-        /* 關鍵：設定超長過渡時間，讓它在滑鼠移開後「很久」才變回不透明 (視覺上等於不再出現) */
         opacity: 1;
         transition: opacity 999999s ease-in-out; 
     }
 
-    /* 當滑鼠滑過整行新聞時 */
     .news-item-row:hover .new-badge {
-        /* 立即隱藏 */
         opacity: 0;
-        animation: none; /* 停止閃爍 */
-        transition: opacity 0s; /* 立即生效 */
+        animation: none;
+        transition: opacity 0s;
     }
     
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
@@ -163,29 +164,23 @@ def extract_time_from_html(soup):
         return None
 
 def fetch_full_article(url, summary_fallback=""):
-    """ 
-    針對香港各大媒體優化的全文抓取器 
-    目標：抓取真實內文，段落間保留空行
-    """
+    """ 抓取新聞正文 """
     if "news.google.com" in url or "google.com" in url:
         return summary_fallback if summary_fallback else "(連結還原失敗，請點擊連結查看)", None
 
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10) # 增加 timeout
+        r = requests.get(url, headers=HEADERS, timeout=10) 
         r.encoding = r.apparent_encoding 
         soup = BeautifulSoup(r.text, 'html.parser')
         
         real_time = extract_time_from_html(soup)
         
-        # 移除干擾元素
         for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', 'input', '.ad', '.advertisement', '.related-news', '.hidden']):
             tag.decompose()
 
         paragraphs = []
         
-        # --- 1. 針對特定網站的精準抓取 ---
-        
-        # 政府新聞網
+        # --- 針對特定網站的抓取邏輯 ---
         if "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content") or soup.find(id="content")
             if content_div:
@@ -195,64 +190,15 @@ def fetch_full_article(url, summary_fallback=""):
                 else:
                     raw_text = content_div.get_text(separator="\n")
                 
-                # 使用 \n\n 確保段落間有空行
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
-        # HK01
-        elif "hk01.com" in url:
-            content_div = soup.find('div', class_=re.compile(r'article-content|article_content'))
-            if content_div:
-                paragraphs = content_div.find_all(['p', 'div'], recursive=False)
-
-        # 東網 on.cc
-        elif "on.cc" in url:
-            content_div = soup.find(class_="breakingNewsContent") or soup.find(class_="news_content")
-            if content_div:
-                paragraphs = content_div.find_all('p')
-                if not paragraphs:
-                    raw_text = content_div.get_text(separator="\n")
-                    lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
-                    return "\n\n".join(lines), real_time
-
-        # 明報 Mingpao
-        elif "mingpao.com" in url:
-            content_div = soup.find(class_="txt4") 
-            if content_div:
-                paragraphs = content_div.find_all('p')
-
-        # 星島 Stheadline
-        elif "stheadline.com" in url:
-            content_div = soup.find(class_="content-article") or soup.find('div', class_=re.compile(r'article-content'))
-            if content_div:
-                paragraphs = content_div.find_all('p')
-
-        # 信報 HKEJ
-        elif "hkej.com" in url:
-            content_div = soup.find(id="article-content")
-            if content_div:
-                paragraphs = content_div.find_all('p')
-
-        # RTHK
-        elif "rthk.hk" in url:
-            content_div = soup.find(class_="itemFullText")
-            if content_div:
-                paragraphs = content_div.find_all('p')
-                if not paragraphs:
-                    raw_text = content_div.get_text(separator="\n")
-                    lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
-                    return "\n\n".join(lines), real_time
-
-        # --- 2. 通用智慧抓取 ---
-        if not paragraphs:
-            content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content']))
-            if content_area:
-                paragraphs = content_area.find_all(['p'], recursive=False)
-                if not paragraphs:
-                    paragraphs = content_area.find_all('p')
-        
-        # --- 3. 兜底方案 ---
-        if not paragraphs:
+        content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content']))
+        if content_area:
+            paragraphs = content_area.find_all(['p', 'div'], recursive=False)
+            if not paragraphs:
+                paragraphs = content_area.find_all('p')
+        else:
             paragraphs = soup.find_all('p')
 
         clean_text = []
@@ -264,7 +210,6 @@ def fetch_full_article(url, summary_fallback=""):
         if not clean_text:
             return summary_fallback if summary_fallback else "(無法自動提取全文，可能受限於付費牆或動態載入)", real_time
             
-        # 使用 \n\n 作為分隔符，創造空行效果
         full_text = "\n\n".join(clean_text)
         return full_text, real_time
 
@@ -280,13 +225,14 @@ def is_new_news(timestamp):
         else:
             timestamp = timestamp.astimezone(HK_TZ)
         diff = (now - timestamp).total_seconds() / 60
-        # 修正：30 分鐘內為 New
         return 0 <= diff <= 30
     except:
         return False
 
-# --- 3. 抓取邏輯 ---
+# --- 3. 抓取邏輯 (加入 show_spinner=False 實現靜默更新) ---
 
+# show_spinner=False 確保自動更新時不顯示轉圈圈
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_google_proxy(site_query, site_name, color, limit=10):
     query = urllib.parse.quote(site_query)
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
@@ -319,6 +265,7 @@ def fetch_google_proxy(site_query, site_name, color, limit=10):
     except:
         return []
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_single_source(config, limit=10):
     data = []
     today_date = datetime.datetime.now(HK_TZ).date() 
@@ -388,7 +335,7 @@ def fetch_single_source(config, limit=10):
     data.sort(key=lambda x: x['timestamp'], reverse=True)
     return config['name'], data[:limit]
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_all_news_data_parallel(limit=10):
     RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app" 
     ANTIDRUG_RSS = "https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+保安局+OR+鄧炳強+OR+戰時炸彈+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
