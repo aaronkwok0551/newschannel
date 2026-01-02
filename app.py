@@ -34,6 +34,28 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
+    /* --- 關鍵修改：防止更新時畫面變淡 (Silent Rerun) --- */
+    
+    /* 1. 強制主容器不透明度永遠為 1，取消過渡動畫 */
+    .stApp, div[data-testid="stAppViewContainer"] {
+        opacity: 1 !important;
+        transition: none !important;
+    }
+    
+    /* 2. 隱藏頂部彩虹載入條 */
+    header .stDecoration {
+        display: none !important;
+    }
+    
+    /* 3. 隱藏右上角 Running 動畫 (可選，讓更新完全無感) */
+    div[data-testid="stStatusWidget"] {
+        visibility: hidden;
+    }
+
+    /* 防止畫面跳動 */
+    div.block-container { min-height: 100vh; }
+    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
+    
     /* 閃爍特效 */
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
@@ -44,9 +66,14 @@ st.markdown("""
         font-size: 0.75em;
         display: inline-block;
         vertical-align: middle;
+        opacity: 1;
+        transition: opacity 0.3s ease;
+    }
+
+    .news-item-row:hover .new-badge {
+        opacity: 0;
     }
     
-    /* 連結與文字 */
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
@@ -445,6 +472,7 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
+            # 這裡只設置狀態，不進行耗時操作
             st.session_state.show_preview = True
             st.rerun()
 
