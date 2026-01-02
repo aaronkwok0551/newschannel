@@ -51,28 +51,30 @@ st.markdown("""
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* 卡片標題 (在 Container 內部) */
+    /* 卡片標題 (Pin 在頂部) */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 0px 0px 10px 0px; /* 調整內距 */
-        margin-bottom: 10px;
+        padding: 15px 10px; /* 增加一點內距 */
+        margin: 0;          /* 移除外距 */
         border-bottom: 2px solid #f1f5f9;
         display: flex; 
         justify-content: space-between; 
         align-items: center;
-        background-color: white;
+        background-color: white; /* 確保背景不透明 */
+        
+        /* 關鍵：Sticky 定位 */
         position: sticky;
         top: 0;
-        z-index: 20;
+        z-index: 50; /* 確保在內容之上 */
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
     
     /* 新聞項目列 */
     .news-item-row { 
-        padding: 8px 0; 
+        padding: 8px 5px; /* 左右增加一點內距 */
         border-bottom: 1px solid #f1f5f9; 
     }
     .news-item-row:last-child { border-bottom: none; }
@@ -85,6 +87,11 @@ st.markdown("""
     
     div[data-testid="stDialog"] { border-radius: 15px; }
     .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
+    
+    /* 移除 Streamlit 容器內建的頂部 Padding，讓 Header 真正貼頂 */
+    div[data-testid="stVerticalBlockBorderWrapper"] > div > div[data-testid="stVerticalBlock"] {
+        padding-top: 0rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -261,7 +268,7 @@ def is_new_news(timestamp):
 # --- 3. 抓取邏輯 (並行處理) ---
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_google_proxy(site_query, site_name, color, limit=30):
+def fetch_google_proxy(site_query, site_name, color, limit=100):
     query = urllib.parse.quote(site_query)
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
     try:
@@ -294,7 +301,7 @@ def fetch_google_proxy(site_query, site_name, color, limit=30):
         return []
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_single_source(config, limit=30):
+def fetch_single_source(config, limit=100):
     data = []
     today_date = datetime.datetime.now(HK_TZ).date() 
 
@@ -364,7 +371,7 @@ def fetch_single_source(config, limit=30):
     return config['name'], data[:limit]
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_all_news_data_parallel(limit=30):
+def get_all_news_data_parallel(limit=100):
     RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app" 
     ANTIDRUG_RSS = "https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+保安局+OR+鄧炳強+OR+戰時炸彈+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
 
@@ -431,10 +438,6 @@ with st.sidebar:
     
     st.divider()
     
-    news_limit = st.slider("顯示新聞數量", min_value=5, max_value=100, value=30)
-    
-    st.divider()
-    
     select_count = len(st.session_state.selected_links)
     st.metric("已選新聞", f"{select_count} 篇")
     
@@ -447,8 +450,8 @@ with st.sidebar:
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
-# 抓取資料
-news_data_map, source_configs = get_all_news_data_parallel(news_limit)
+# 預設抓取 100 條，顯示當天所有
+news_data_map, source_configs = get_all_news_data_parallel(100)
 
 all_flat_news = []
 for name, items in news_data_map.items():
@@ -488,16 +491,14 @@ for row in rows:
             name = conf['name']
             items = news_data_map.get(name, [])
             
-            # 卡片容器 (Header + Scrollable Area)
+            st.markdown(f"""
+                <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
+                    <span>{name}</span>
+                    <span class='status-badge'>{len(items)} 則</span>
+                </div>
+            """, unsafe_allow_html=True)
+            
             with st.container(height=600, border=True):
-                # 將 Header 移入 container 內部
-                st.markdown(f"""
-                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
-                        <span>{name}</span>
-                        <span class='status-badge'>{len(items)} 則</span>
-                    </div>
-                """, unsafe_allow_html=True)
-
                 if not items:
                     st.caption("暫無資料")
                 else:
@@ -516,9 +517,8 @@ for row in rows:
                             st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_state)
                         with c2:
                             new_badge_html = f'<span class="new-badge">NEW!</span>' if is_new else ''
-                            title_esc = html.escape(item['title']) # 防止標題破壞 HTML
+                            title_esc = html.escape(item['title'])
                             text_style = 'class="read-text"' if is_selected else ""
                             
-                            # 緊湊 HTML，無多餘空白
                             item_html = f'<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{title_esc}</a><div class="news-time">{item["time_str"]}</div></div>'
                             st.markdown(item_html, unsafe_allow_html=True)
