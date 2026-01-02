@@ -44,6 +44,12 @@ st.markdown("""
         font-size: 0.75em;
         display: inline-block;
         vertical-align: middle;
+        opacity: 1;
+        transition: opacity 0.3s ease;
+    }
+
+    .news-item-row:hover .new-badge {
+        opacity: 0;
     }
     
     /* 連結與文字 */
@@ -51,34 +57,40 @@ st.markdown("""
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* 卡片標題樣式 (內部樣式) */
+    /* 卡片標題 */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 10px 5px;
+        padding: 10px 15px;
+        background-color: #ffffff; 
+        border: 1px solid #e2e8f0;
+        border-bottom: none; 
+        border-top-left-radius: 8px; 
+        border-top-right-radius: 8px;
         display: flex; 
         justify-content: space-between; 
         align-items: center;
-        background-color: #ffffff; /* 確保背景是白色 */
+        margin-bottom: -15px; 
+        position: relative;
+        z-index: 10;
     }
 
-    /* --- 關鍵修改：修復標題穿透問題 (Pinned & Z-Index) --- */
-    /* 選擇包含 .news-source-header 的 Streamlit 元件外層 div */
+    /* 確保標題黏在頂部 */
     div[data-testid="stVerticalBlock"] > div:has(.news-source-header) {
         position: sticky;
         top: 0;
-        z-index: 9999; /* 提高層級，確保壓在新聞文字上面 */
-        background-color: #ffffff; /* 實心背景，防止文字透視 */
+        z-index: 9999; 
+        background-color: #ffffff;
         border-bottom: 2px solid #f1f5f9;
         margin-bottom: 10px;
-        margin-top: -15px; /* 修正頂部間隙 */
+        margin-top: -15px;
         padding-top: 10px;
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
     
-    /* 回到頂部按鈕樣式 */
+    /* 回到頂部按鈕 */
     .header-btn {
         background: transparent;
         border: 1px solid #e2e8f0;
@@ -96,40 +108,58 @@ st.markdown("""
         border-color: #2563eb;
     }
     
-    /* 新聞項目列 */
-    .news-item-row { 
-        padding: 8px 5px; 
-        border-bottom: 1px solid #f1f5f9; 
-    }
+    .news-item-row { padding: 8px 5px; border-bottom: 1px solid #f1f5f9; }
     .news-item-row:last-child { border-bottom: none; }
-    
-    .news-item-row:hover .new-badge { opacity: 0; }
-
     .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
-    /* 調整元件間距 */
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
     
-    div[data-testid="stDialog"] { border-radius: 15px; }
-    .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
+    /* 容器樣式微調 */
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        border-top-left-radius: 0 !important;
+        border-top-right-radius: 0 !important;
+        border-color: #e2e8f0 !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        background-color: white;
+    }
     
-    /* 移除 Streamlit 容器內建的頂部 Padding */
+    /* 移除原生 Padding */
     div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] {
         padding-top: 0rem;
     }
-    
-    /* 防止畫面跳動 */
-    div.block-container { min-height: 100vh; }
-    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
 
-    /* 隱藏預設載入動畫 */
+    div[data-testid="stDialog"] { border-radius: 15px; }
+    .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
+    
+    /* --- 關鍵修改：手機版 RWD 優化 --- */
+    @media (max-width: 768px) {
+        /* 手機版：限制高度，恢復捲軸，避免列表無限長 */
+        div[data-testid="stVerticalBlockBorderWrapper"] > div > div[data-testid="stVerticalScrollArea"] {
+            height: 450px !important;  /* 比桌面版稍微短一點，留出空間 */
+            max-height: 450px !important;
+            overflow-y: auto !important;
+        }
+        
+        /* 增加卡片之間的間距，創造「安全滑動區」 */
+        div[data-testid="column"] {
+            margin-bottom: 40px !important; /* 增加底部間距 */
+            padding-bottom: 10px;
+            border-bottom: 2px dashed #e2e8f0; /* 視覺提示分隔 */
+        }
+
+        /* 確保回到頂部按鈕在手機上也顯示 */
+        .header-btn { display: inline-block !important; }
+    }
+
+    /* 靜默更新 */
     .stApp, div[data-testid="stAppViewContainer"] {
         opacity: 1 !important;
         transition: none !important;
     }
     header .stDecoration { display: none !important; }
     div[data-testid="stStatusWidget"] { visibility: hidden; }
+    div.block-container { min-height: 100vh; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -494,6 +524,10 @@ with st.sidebar:
     
     st.divider()
     
+    # news_limit = st.slider("顯示新聞數量", min_value=5, max_value=100, value=30)
+    # 取消滑桿，預設全顯示 (上限100)
+    news_limit = 100
+    
     select_count = len(st.session_state.selected_links)
     st.metric("已選新聞", f"{select_count} 篇")
     
@@ -508,7 +542,7 @@ with st.sidebar:
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
 # 抓取資料
-news_data_map, source_configs = get_all_news_data_parallel(100)
+news_data_map, source_configs = get_all_news_data_parallel(news_limit)
 
 all_flat_news = []
 for name, items in news_data_map.items():
@@ -548,22 +582,22 @@ for row in rows:
             name = conf['name']
             items = news_data_map.get(name, [])
             
-            # 將標題移入 st.container 內部
-            with st.container(height=600, border=True):
-                # 嵌入 HTML 標題與按鈕
-                # 修正 JS 邏輯：自動尋找可滾動的父容器並置頂
-                st.markdown(f"""
-                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
-                        <div style="display:flex; align-items:center;">
-                            <span>{name}</span>
-                            <button class="header-btn" onclick="var el=this;while(el&&window.getComputedStyle(el).overflowY!=='auto'){{el=el.parentElement}}if(el)el.scrollTop=0;" title="回到最新">
-                                ⬆
-                            </button>
-                        </div>
-                        <span class='status-badge'>{len(items)} 則</span>
+            # 使用自訂標題 (嵌入按鈕)
+            st.markdown(f"""
+                <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
+                    <div style="display:flex; align-items:center;">
+                        <span>{name}</span>
+                        <!-- 增強版 JS：自動尋找最近的可滾動容器 -->
+                        <button class="header-btn" onclick="var el=this.closest('[data-testid=\\'stVerticalBlock\\']').querySelector('[data-testid=\\'stVerticalScrollArea\\']'); if(el) el.scrollTop = 0;" title="回到最新">
+                            ⬆
+                        </button>
                     </div>
-                """, unsafe_allow_html=True)
-                
+                    <span class='status-badge'>{len(items)} 則</span>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # 使用 Streamlit 原生容器，高度固定，自動產生捲軸
+            with st.container(height=600, border=True):
                 if not items:
                     st.caption("暫無資料")
                 else:
