@@ -51,23 +51,26 @@ st.markdown("""
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* 卡片標題 (Sticky Header) */
+    /* 卡片標題樣式 (內部樣式) */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 12px 15px;
-        background-color: rgba(255, 255, 255, 0.95); /* 微微透明背景 */
-        border-bottom: 2px solid #f1f5f9;
+        padding: 10px 5px;
         display: flex; 
         justify-content: space-between; 
         align-items: center;
-        
-        /* 關鍵：讓標題黏在容器頂部 */
+    }
+
+    /* --- 關鍵修改：讓標題列固定 (Pinned) --- */
+    /* 選擇包含 .news-source-header 的 Streamlit 元件外層 div */
+    div[data-testid="stVerticalBlock"] > div:has(.news-source-header) {
         position: sticky;
         top: 0;
-        z-index: 50;
-        backdrop-filter: blur(4px);
+        z-index: 100;
+        background-color: white; /* 必須有背景色，否則文字會重疊 */
+        border-bottom: 2px solid #f1f5f9;
+        margin-bottom: 10px;
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
@@ -97,18 +100,33 @@ st.markdown("""
     }
     .news-item-row:last-child { border-bottom: none; }
     
+    .news-item-row:hover .new-badge { opacity: 0; }
+
     .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
     /* 調整元件間距 */
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
+    
     div[data-testid="stDialog"] { border-radius: 15px; }
     .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
     
-    /* 移除 Streamlit 容器內建的頂部 Padding，讓 Header 真正貼頂 */
+    /* 移除 Streamlit 容器內建的頂部 Padding */
     div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] {
         padding-top: 0rem;
     }
+    
+    /* 防止畫面跳動 */
+    div.block-container { min-height: 100vh; }
+    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
+
+    /* 隱藏預設載入動畫 */
+    .stApp, div[data-testid="stAppViewContainer"] {
+        opacity: 1 !important;
+        transition: none !important;
+    }
+    header .stDecoration { display: none !important; }
+    div[data-testid="stStatusWidget"] { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -282,7 +300,7 @@ def is_new_news(timestamp):
     except:
         return False
 
-# --- 3. 抓取邏輯 ---
+# --- 3. 抓取邏輯 (並行處理) ---
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_google_proxy(site_query, site_name, color, limit=100):
@@ -480,6 +498,7 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
+            # 這裡只設置狀態，不進行耗時操作
             st.session_state.show_preview = True
             st.rerun()
 
