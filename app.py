@@ -59,7 +59,7 @@ st.markdown("""
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 12px 0px; /* 上下內距 */
+        padding: 15px 20px; /* 增加內距 */
         background-color: #ffffff; /* 必須是不透明背景 */
         border-bottom: 2px solid #f1f5f9;
         display: flex; 
@@ -69,12 +69,13 @@ st.markdown("""
         /* 關鍵：黏在容器頂部 */
         position: sticky;
         top: 0;
-        z-index: 50;
-        margin-bottom: 5px;
+        z-index: 100;
+        margin-top: 0;
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
     
+    /* 按鈕樣式 */
     .header-btn {
         background: transparent;
         border: 1px solid #e2e8f0;
@@ -88,16 +89,22 @@ st.markdown("""
     }
     .header-btn:hover { background-color: #e0e7ff; color: #2563eb; border-color: #2563eb; }
     
-    .news-item-row { padding: 8px 5px; border-bottom: 1px solid #f1f5f9; }
+    /* 新聞列表 */
+    .news-item-row { 
+        padding: 10px 20px; /* 配合 Header 內距 */
+        border-bottom: 1px solid #f1f5f9; 
+    }
     .news-item-row:last-child { border-bottom: none; }
     .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
+    /* 調整元件間距 */
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
     
-    /* 調整 Container 內距，讓 Header 貼頂 */
+    /* --- 關鍵佈局修正：移除 Streamlit 容器內建 Padding --- */
+    /* 這樣 Header 才能真正貼在盒子最頂端 */
     div[data-testid="stVerticalScrollArea"] {
-        padding-top: 0 !important;
+        padding: 0 !important; 
     }
     
     div[data-testid="stDialog"] { border-radius: 15px; }
@@ -105,7 +112,6 @@ st.markdown("""
     
     /* 手機版優化 */
     @media (max-width: 768px) {
-        /* 手機版保持捲軸，但稍微縮短高度以免佔滿螢幕 */
         div[data-testid="stVerticalScrollArea"] {
             height: 450px !important;
             max-height: 450px !important;
@@ -476,6 +482,7 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
+            # 這裡只設置狀態，不進行耗時操作
             st.session_state.show_preview = True
             st.rerun()
 
@@ -522,10 +529,9 @@ for row in rows:
             name = conf['name']
             items = news_data_map.get(name, [])
             
-            # 卡片容器 (Header + Scrollable Area)
+            # 卡片容器
             with st.container(height=600, border=True):
-                # 嵌入 HTML 標題與按鈕
-                # 這裡將 Header 放在容器內的第一個元素，並透過 CSS sticky 固定
+                # 將 Header 移入 Container 內部，並透過 CSS 進行 Sticky 定位
                 st.markdown(f"""
                     <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
                         <div style="display:flex; align-items:center;">
@@ -537,7 +543,7 @@ for row in rows:
                         <span class='status-badge'>{len(items)} 則</span>
                     </div>
                 """, unsafe_allow_html=True)
-                
+
                 if not items:
                     st.caption("暫無資料")
                 else:
