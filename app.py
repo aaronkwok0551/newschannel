@@ -34,18 +34,7 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
-    /* 防止畫面跳動 */
-    div.block-container { min-height: 100vh; }
-    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
-
-    /* 隱藏預設載入動畫 */
-    .stApp, div[data-testid="stAppViewContainer"] {
-        opacity: 1 !important;
-        transition: none !important;
-    }
-    header .stDecoration { display: none !important; }
-    div[data-testid="stStatusWidget"] { visibility: hidden; }
-
+    /* 閃爍特效 */
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
         color: #ef4444;
@@ -55,75 +44,70 @@ st.markdown("""
         font-size: 0.75em;
         display: inline-block;
         vertical-align: middle;
-        opacity: 1;
-        transition: opacity 0.3s ease;
-    }
-
-    .news-item-row:hover .new-badge {
-        opacity: 0;
     }
     
+    /* 連結與文字 */
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
+    /* 卡片標題 (Sticky Header) */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 10px 15px;
-        background-color: #ffffff; 
-        border: 1px solid #e2e8f0;
-        border-bottom: none; 
-        border-top-left-radius: 8px; 
-        border-top-right-radius: 8px;
+        padding: 12px 15px;
+        background-color: rgba(255, 255, 255, 0.95); /* 微微透明背景 */
+        border-bottom: 2px solid #f1f5f9;
         display: flex; 
         justify-content: space-between; 
         align-items: center;
-        margin-bottom: -15px; 
-        position: relative;
-        z-index: 10;
+        
+        /* 關鍵：讓標題黏在容器頂部 */
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        backdrop-filter: blur(4px);
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
     
-    .news-item-row { padding: 6px 0; border-bottom: 1px solid #f1f5f9; position: relative; }
+    /* 回到頂部按鈕樣式 */
+    .header-btn {
+        background: transparent;
+        border: 1px solid #e2e8f0;
+        color: #64748b;
+        cursor: pointer;
+        font-size: 0.7em;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: 8px;
+        transition: all 0.2s;
+    }
+    .header-btn:hover {
+        background-color: #f1f5f9;
+        color: #2563eb;
+        border-color: #cbd5e1;
+    }
+    
+    /* 新聞項目列 */
+    .news-item-row { 
+        padding: 8px 5px; 
+        border-bottom: 1px solid #f1f5f9; 
+    }
     .news-item-row:last-child { border-bottom: none; }
     
-    .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 2px; display: block; }
+    .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
+    /* 調整元件間距 */
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
-    
-    div[data-testid="stVerticalBlockBorderWrapper"] > div {
-        border-top-left-radius: 0 !important;
-        border-top-right-radius: 0 !important;
-        border-color: #e2e8f0 !important;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-        background-color: white;
-    }
-    
     div[data-testid="stDialog"] { border-radius: 15px; }
     .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
-
-    /* 回到頂部按鈕樣式 */
-    .back-to-top-btn {
-        display: block;
-        width: 100%;
-        text-align: center;
-        padding: 8px;
-        margin-top: 10px;
-        background-color: #f1f5f9;
-        color: #64748b;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 0.8em;
-        transition: background 0.2s;
-    }
-    .back-to-top-btn:hover {
-        background-color: #e2e8f0;
-        color: #334155;
+    
+    /* 移除 Streamlit 容器內建的頂部 Padding，讓 Header 真正貼頂 */
+    div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] {
+        padding-top: 0rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -193,9 +177,6 @@ def extract_time_from_html(soup):
         return None
 
 def fetch_full_article(url, summary_fallback=""):
-    """ 
-    全能型內容抓取器：針對各大媒體優化
-    """
     if "news.google.com" in url or "google.com" in url:
         return summary_fallback if summary_fallback else "(連結還原失敗，請點擊連結查看)", None
 
@@ -212,8 +193,6 @@ def fetch_full_article(url, summary_fallback=""):
             tag.decompose()
 
         paragraphs = []
-        
-        # --- 特定網站規則 ---
         
         if "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content") or soup.find(id="content")
@@ -245,30 +224,6 @@ def fetch_full_article(url, summary_fallback=""):
                     raw_text = content_div.get_text(separator="\n")
                     lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                     return "\n\n".join(lines), real_time
-        
-        # Now 新聞網頁
-        elif "news.now.com" in url:
-            content_div = soup.find(class_="newsLeading") or soup.find(class_="newsArticleContainer")
-            if content_div:
-                 paragraphs = content_div.find_all('p')
-
-        # 有線新聞 i-Cable
-        elif "i-cable.com" in url:
-            content_div = soup.find(class_="post-content") or soup.find(class_="entry-content")
-            if content_div:
-                paragraphs = content_div.find_all('p')
-
-        # 巴士的報 Bastille Post
-        elif "bastillepost.com" in url:
-            content_div = soup.find(class_="post-content") or soup.find(class_="entry-content")
-            if content_div:
-                paragraphs = content_div.find_all('p')
-
-        # 經濟日報 HKET
-        elif "hket.com" in url:
-             content_div = soup.find(class_="article-detail-content-container")
-             if content_div:
-                 paragraphs = content_div.find_all('p')
 
         elif "mingpao.com" in url:
             content_div = soup.find(class_="txt4") 
@@ -289,7 +244,6 @@ def fetch_full_article(url, summary_fallback=""):
                     lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                     return "\n\n".join(lines), real_time
 
-        # --- 通用智慧抓取 ---
         if not paragraphs:
             content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content', 'body']))
             if content_area:
@@ -303,7 +257,7 @@ def fetch_full_article(url, summary_fallback=""):
         clean_text = []
         for p in paragraphs:
             text = p.get_text().strip()
-            if len(text) > 5 and "Copyright" not in text and "版權所有" not in text and "點擊閱讀" not in text:
+            if len(text) > 5 and "Copyright" not in text and "版權所有" not in text:
                 clean_text.append(text)
 
         if not clean_text:
@@ -328,7 +282,7 @@ def is_new_news(timestamp):
     except:
         return False
 
-# --- 3. 抓取邏輯 (並行處理) ---
+# --- 3. 抓取邏輯 ---
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_google_proxy(site_query, site_name, color, limit=100):
@@ -526,7 +480,6 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
-            # 這裡只設置狀態，不進行耗時操作
             st.session_state.show_preview = True
             st.rerun()
 
@@ -573,16 +526,21 @@ for row in rows:
             name = conf['name']
             items = news_data_map.get(name, [])
             
-            # 使用自訂標題
-            st.markdown(f"""
-                <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
-                    <span>{name}</span>
-                    <span class='status-badge'>{len(items)} 則</span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # 在 Container 內部最下方加入回到頂部按鈕 (使用 JS 技巧)
+            # 將標題移入 st.container 內部
             with st.container(height=600, border=True):
+                # 嵌入 HTML 標題與按鈕
+                st.markdown(f"""
+                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
+                        <div style="display:flex; align-items:center;">
+                            <span>{name}</span>
+                            <button class="header-btn" onclick="this.closest('[data-testid=\\'stVerticalScrollArea\\']').scrollTop = 0;" title="回到最新">
+                                ⬆
+                            </button>
+                        </div>
+                        <span class='status-badge'>{len(items)} 則</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                
                 if not items:
                     st.caption("暫無資料")
                 else:
@@ -606,11 +564,3 @@ for row in rows:
                             
                             item_html = f'<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{title_esc}</a><div class="news-time">{item["time_str"]}</div></div>'
                             st.markdown(item_html, unsafe_allow_html=True)
-                    
-                    # 回到頂部按鈕
-                    # 注意：這裡使用 onclick 呼叫 JavaScript 來控制最近的 scrollable parent 滾動
-                    st.markdown("""
-                        <button class="back-to-top-btn" onclick="this.parentElement.parentElement.parentElement.scrollTop = 0;">
-                            ⬆️ 回到最新
-                        </button>
-                    """, unsafe_allow_html=True)
