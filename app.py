@@ -33,6 +33,10 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
+    /* 防止畫面跳動 */
+    div.block-container { min-height: 100vh; }
+    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
+
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
         color: #ef4444;
@@ -43,11 +47,13 @@ st.markdown("""
         display: inline-block;
         vertical-align: middle;
         opacity: 1;
-        transition: opacity 0.3s ease;
+        transition: opacity 999999s ease-in-out;
     }
 
     .news-item-row:hover .new-badge {
         opacity: 0;
+        animation: none;
+        transition: opacity 0s;
     }
     
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
@@ -64,11 +70,22 @@ st.markdown("""
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
     
+    /* 新聞列表容器：固定高度 + 捲軸 */
     .news-list-container {
         background-color: #ffffff; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; border-top: none;
-        padding-bottom: 5px; height: 100%;
+        padding-bottom: 5px; 
+        
+        /* 關鍵修改：固定高度，超過則顯示 Scroll Bar */
+        height: 500px;       /* 高度大約可放 10 條新聞 */
+        overflow-y: auto;    /* 啟用垂直捲動 */
     }
+
+    /* 美化捲軸 (Chrome, Safari) */
+    .news-list-container::-webkit-scrollbar { width: 6px; }
+    .news-list-container::-webkit-scrollbar-track { background: #f8fafc; }
+    .news-list-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    .news-list-container::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
     .news-item-row { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; transition: background-color 0.1s; }
     .news-item-row:hover { background-color: #f8fafc; }
@@ -80,9 +97,6 @@ st.markdown("""
     div[data-testid="column"] { display: flex; align-items: start; }
     div[data-testid="stDialog"] { border-radius: 15px; }
     .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
-    
-    div.block-container { min-height: 100vh; }
-    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -438,16 +452,6 @@ def show_txt_preview(txt_content):
         st.session_state.show_preview = False
         st.rerun()
 
-# --- 這裡開始是數據獲取與變數宣告，必須在 Sidebar 之前執行 ---
-# 這樣 Sidebar 內的按鈕邏輯才能存取到 all_flat_news
-
-# 1. 先抓取數據
-# 雖然 news_limit 在 sidebar 定義，但因為 Streamlit 的執行順序，
-# 我們可以先給個預設值，或者將 sidebar 的 slider 移到這裡?
-# 不，為了 UI 順序，我們必須先定義 sidebar。
-# 但是 button logic 依賴 data。
-# 解決方案：將 Button 邏輯放到數據獲取之後，但使用 st.sidebar.button 讓它顯示在側邊欄。
-
 with st.sidebar:
     st.header("⚙️ 控制台")
     st.caption(f"更新時間: {datetime.datetime.now(HK_TZ).strftime('%H:%M:%S')}")
@@ -463,27 +467,25 @@ with st.sidebar:
     
     select_count = len(st.session_state.selected_links)
     st.metric("已選新聞", f"{select_count} 篇")
-
-    # 注意：這裡只放置按鈕的佔位，邏輯移到下方
-    generate_btn = st.button("📄 生成 TXT 內容", type="primary", use_container_width=True)
+    
+    if st.button("📄 生成 TXT 內容", type="primary", use_container_width=True):
+        if select_count == 0:
+            st.warning("請先勾選新聞！")
+        else:
+            # 這裡只設置狀態，不進行耗時操作
+            st.session_state.show_preview = True
+            st.rerun()
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
-# 2. 獲取數據
+# 抓取資料 (傳入滑桿的數值)
 news_data_map, source_configs = get_all_news_data_parallel(news_limit)
+
 all_flat_news = []
 for name, items in news_data_map.items():
     all_flat_news.extend(items)
 
-# 3. 執行生成按鈕邏輯 (現在有數據了)
-if generate_btn:
-    if select_count == 0:
-        st.sidebar.warning("請先勾選新聞！")
-    else:
-        st.session_state.show_preview = True
-        st.rerun()
-
-# 4. 處理彈窗顯示
+# 處理生成邏輯 (在主流程中執行)
 if st.session_state.show_preview:
     if not st.session_state.generated_text:
         with st.spinner("正在提取全文..."):
@@ -505,7 +507,6 @@ if st.session_state.show_preview:
     
     show_txt_preview(st.session_state.generated_text)
 
-# 5. 主畫面渲染
 st.title("Tommy Sir 後援會之新聞監察系統")
 
 cols_per_row = 4
@@ -537,18 +538,17 @@ for row in rows:
                     
                     c1, c2 = st.columns([0.15, 0.85])
                     with c1:
-                        # 使用固定唯一的 key (link)
-                        unique_key = f"chk_{link}"
-                        def update_state(k=link, u_k=unique_key):
-                            if st.session_state[u_k]:
-                                st.session_state.selected_links.add(k)
+                        def update_state(k=link):
+                            if k in st.session_state.selected_links:
+                                st.session_state.selected_links.remove(k)
                             else:
-                                st.session_state.selected_links.discard(k)
-                        
-                        st.checkbox("", key=unique_key, value=is_selected, on_change=update_state)
+                                st.session_state.selected_links.add(k)
+                        st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_state)
                     with c2:
+                        # CSS hover 隱藏 new badge
                         new_badge_html = f'<span class="new-badge">NEW!</span>' if is_new else ''
                         text_style = 'class="read-text"' if is_selected else ""
+                        
                         item_html = f"""<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{item['title']}</a><div class="news-time">{item['time_str']}</div></div>"""
                         st.markdown(item_html, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
