@@ -48,13 +48,15 @@ st.markdown("""
         transition: opacity 0.3s ease;
     }
 
-    .news-item-row:hover .new-badge { opacity: 0; }
+    .news-item-row:hover .new-badge {
+        opacity: 0;
+    }
     
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* --- 卡片標題 (Sticky Header) --- */
+    /* 卡片標題 (Sticky Header) */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
@@ -289,7 +291,7 @@ def is_new_news(timestamp):
 # --- 3. 抓取邏輯 (並行處理) ---
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_google_proxy(site_query, site_name, color, limit=100):
+def fetch_google_proxy(site_query, site_name, color, limit=300):
     query = urllib.parse.quote(site_query)
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
     try:
@@ -322,13 +324,13 @@ def fetch_google_proxy(site_query, site_name, color, limit=100):
         return []
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_single_source(config, limit=100):
+def fetch_single_source(config, limit=300):
     data = []
     today_date = datetime.datetime.now(HK_TZ).date() 
 
     try:
         if config['type'] == 'now_api':
-             api_url = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1"
+             api_url = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1&pageSize=50" # 增加 pageSize
              r = requests.get(api_url, headers=HEADERS, timeout=10)
              data_list = r.json()
              items_list = []
@@ -358,7 +360,8 @@ def fetch_single_source(config, limit=100):
                     })
         
         elif config['type'] == 'api_hk01':
-             r = requests.get(config['url'], headers=HEADERS, params={"limit": 200}, timeout=10)
+             # 增加 limit 參數以獲取更多新聞，確保抓取到今天所有的
+             r = requests.get(config['url'], headers=HEADERS, params={"limit": 300}, timeout=10)
              items_list = r.json().get('items', [])
              for item in items_list:
                  data_obj = item.get('data', {})
@@ -410,26 +413,35 @@ def fetch_single_source(config, limit=100):
     return config['name'], data[:limit]
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_all_news_data_parallel(limit=100):
+def get_all_news_data_parallel(limit=300):
     RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app" 
     ANTIDRUG_RSS = "https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+保安局+OR+鄧炳強+OR+戰時炸彈+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
 
     configs = [
+        # 第一行 (4個)
         {"name": "禁毒/海關新聞", "type": "rss", "url": ANTIDRUG_RSS, "color": "#D946EF", 'backup_query': 'site:news.google.com 毒品'},
         {"name": "政府新聞（中文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_zh.xml", "color": "#E74C3C", 'backup_query': 'site:info.gov.hk'},
         {"name": "政府新聞（英文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_en.xml", "color": "#C0392B", 'backup_query': 'site:info.gov.hk'},
         {"name": "RTHK", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800", 'backup_query': 'site:news.rthk.hk'},
-        {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A", 'backup_query': 'site:news.now.com/home/local'},
+        
+        # 第二行 (4個) - 更新順序
+        {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news?limit=300", "color": "#7C3AED", 'backup_query': 'site:hk.on.cc'},
         {"name": "HK01", "type": "api_hk01", "url": "https://web-data.api.hk01.com/v2/feed/category/0", "color": "#2563EB", 'backup_query': 'site:hk01.com'},
-        {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news?limit=200", "color": "#7C3AED", 'backup_query': 'site:hk.on.cc'},
         {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316", 'backup_query': 'site:stheadline.com'},
+        {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A", 'backup_query': 'site:news.now.com/home/local'},
+        
+        # 第三行 (4個)
         {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
         {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7", 'backup_query': 'site:i-cable.com'},
-        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index?limit=200", "color": "#64748B", 'backup_query': 'site:hkej.com'},
+        {"name": "經濟日報", "type": "rss", "url": "https://www.hket.com/rss/hongkong", "color": "#7C3AED", 'backup_query': 'site:hket.com'},
+        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index?limit=300", "color": "#64748B", 'backup_query': 'site:hkej.com'},
+        
+        # 第四行 (1個)
+        {"name": "巴士的報", "type": "rss", "url": "https://www.bastillepost.com/hongkong/feed", "color": "#7C3AED", 'backup_query': 'site:bastillepost.com'},
     ]
 
     results_map = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
         future_to_source = {executor.submit(fetch_single_source, conf, limit): conf for conf in configs}
         for future in concurrent.futures.as_completed(future_to_source):
             try:
@@ -488,8 +500,8 @@ with st.sidebar:
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
-# 抓取資料 (預設上限 100 以顯示當天所有)
-news_data_map, source_configs = get_all_news_data_parallel(100)
+# 抓取資料 (預設上限 300 以顯示當天所有)
+news_data_map, source_configs = get_all_news_data_parallel(300)
 
 all_flat_news = []
 for name, items in news_data_map.items():
@@ -529,21 +541,19 @@ for row in rows:
             name = conf['name']
             items = news_data_map.get(name, [])
             
-            # 卡片容器
-            with st.container(height=600, border=True):
-                # 將 Header 移入 Container 內部，並透過 CSS 進行 Sticky 定位
-                st.markdown(f"""
-                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
-                        <div style="display:flex; align-items:center;">
-                            <span>{name}</span>
-                            <button class="header-btn" onclick="var el=this.closest('[data-testid=\\'stVerticalBlock\\']').querySelector('[data-testid=\\'stVerticalScrollArea\\']'); if(el) el.scrollTop = 0;" title="回到最新">
-                                ⬆
-                            </button>
-                        </div>
-                        <span class='status-badge'>{len(items)} 則</span>
+            st.markdown(f"""
+                <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
+                    <div style="display:flex; align-items:center;">
+                        <span>{name}</span>
+                        <button class="header-btn" onclick="var el=this.closest('[data-testid=\\'stVerticalBlock\\']').querySelector('[data-testid=\\'stVerticalScrollArea\\']'); if(el) el.scrollTop = 0;" title="回到最新">
+                            ⬆
+                        </button>
                     </div>
-                """, unsafe_allow_html=True)
-
+                    <span class='status-badge'>{len(items)} 則</span>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            with st.container(height=600, border=True):
                 if not items:
                     st.caption("暫無資料")
                 else:
