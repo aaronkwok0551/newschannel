@@ -60,17 +60,20 @@ st.markdown("""
         display: flex; 
         justify-content: space-between; 
         align-items: center;
+        background-color: #ffffff; /* 確保背景是白色 */
     }
 
-    /* --- 關鍵修改：讓標題列固定 (Pinned) --- */
+    /* --- 關鍵修改：修復標題穿透問題 (Pinned & Z-Index) --- */
     /* 選擇包含 .news-source-header 的 Streamlit 元件外層 div */
     div[data-testid="stVerticalBlock"] > div:has(.news-source-header) {
         position: sticky;
         top: 0;
-        z-index: 100;
-        background-color: white; /* 必須有背景色，否則文字會重疊 */
+        z-index: 9999; /* 提高層級，確保壓在新聞文字上面 */
+        background-color: #ffffff; /* 實心背景，防止文字透視 */
         border-bottom: 2px solid #f1f5f9;
         margin-bottom: 10px;
+        margin-top: -15px; /* 修正頂部間隙 */
+        padding-top: 10px;
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
@@ -82,15 +85,15 @@ st.markdown("""
         color: #64748b;
         cursor: pointer;
         font-size: 0.7em;
-        padding: 2px 6px;
+        padding: 2px 8px;
         border-radius: 4px;
         margin-left: 8px;
         transition: all 0.2s;
     }
     .header-btn:hover {
-        background-color: #f1f5f9;
+        background-color: #e0e7ff;
         color: #2563eb;
-        border-color: #cbd5e1;
+        border-color: #2563eb;
     }
     
     /* 新聞項目列 */
@@ -548,11 +551,12 @@ for row in rows:
             # 將標題移入 st.container 內部
             with st.container(height=600, border=True):
                 # 嵌入 HTML 標題與按鈕
+                # 修正 JS 邏輯：自動尋找可滾動的父容器並置頂
                 st.markdown(f"""
                     <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
                         <div style="display:flex; align-items:center;">
                             <span>{name}</span>
-                            <button class="header-btn" onclick="this.closest('[data-testid=\\'stVerticalScrollArea\\']').scrollTop = 0;" title="回到最新">
+                            <button class="header-btn" onclick="var el=this;while(el&&window.getComputedStyle(el).overflowY!=='auto'){{el=el.parentElement}}if(el)el.scrollTop=0;" title="回到最新">
                                 ⬆
                             </button>
                         </div>
