@@ -11,6 +11,7 @@ import sys
 from streamlit_autorefresh import st_autorefresh
 import concurrent.futures
 import re
+import html
 
 # 設定預設編碼
 try:
@@ -33,7 +34,7 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
-    /* NEW Badge */
+    /* 閃爍特效 */
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
         color: #ef4444;
@@ -50,48 +51,37 @@ st.markdown("""
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* 卡片標題優化 - 讓它看起來像卡片的頂部 */
+    /* 卡片標題 (在 Container 內部) */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 10px 15px;
-        background-color: #ffffff; 
-        border: 1px solid #e2e8f0;
-        border-bottom: none; /* 移除底部邊框以連接下方的容器 */
-        border-top-left-radius: 8px; 
-        border-top-right-radius: 8px;
+        padding: 0px 0px 10px 0px; /* 調整內距 */
+        margin-bottom: 10px;
+        border-bottom: 2px solid #f1f5f9;
         display: flex; 
         justify-content: space-between; 
         align-items: center;
-        margin-bottom: -15px; /* 負邊距，拉近與下方容器的距離 */
-        position: relative;
-        z-index: 10;
+        background-color: white;
+        position: sticky;
+        top: 0;
+        z-index: 20;
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
     
     /* 新聞項目列 */
     .news-item-row { 
-        padding: 6px 0; 
+        padding: 8px 0; 
         border-bottom: 1px solid #f1f5f9; 
     }
     .news-item-row:last-child { border-bottom: none; }
     
-    .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 2px; display: block; }
+    .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
     /* 調整元件間距 */
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
-    
-    /* 讓 Streamlit 原生容器看起來像卡片身體 */
-    div[data-testid="stVerticalBlockBorderWrapper"] > div {
-        border-top-left-radius: 0 !important;
-        border-top-right-radius: 0 !important;
-        border-color: #e2e8f0 !important;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-        background-color: white;
-    }
     
     div[data-testid="stDialog"] { border-radius: 15px; }
     .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
@@ -105,7 +95,6 @@ UTC_TZ = pytz.timezone('UTC')
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
     'Cookie': 'CONSENT=YES+cb.20210720-07-p0.en+FX+417; '
 }
 
@@ -164,7 +153,6 @@ def extract_time_from_html(soup):
         return None
 
 def fetch_full_article(url, summary_fallback=""):
-    """ 抓取新聞正文 """
     if "news.google.com" in url or "google.com" in url:
         return summary_fallback if summary_fallback else "(連結還原失敗，請點擊連結查看)", None
 
@@ -270,7 +258,7 @@ def is_new_news(timestamp):
     except:
         return False
 
-# --- 3. 抓取邏輯 ---
+# --- 3. 抓取邏輯 (並行處理) ---
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_google_proxy(site_query, site_name, color, limit=30):
@@ -500,16 +488,16 @@ for row in rows:
             name = conf['name']
             items = news_data_map.get(name, [])
             
-            # 使用自訂標題
-            st.markdown(f"""
-                <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
-                    <span>{name}</span>
-                    <span class='status-badge'>{len(items)} 則</span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # 原生容器取代 div 拼接
+            # 卡片容器 (Header + Scrollable Area)
             with st.container(height=600, border=True):
+                # 將 Header 移入 container 內部
+                st.markdown(f"""
+                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
+                        <span>{name}</span>
+                        <span class='status-badge'>{len(items)} 則</span>
+                    </div>
+                """, unsafe_allow_html=True)
+
                 if not items:
                     st.caption("暫無資料")
                 else:
@@ -528,12 +516,9 @@ for row in rows:
                             st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_state)
                         with c2:
                             new_badge_html = f'<span class="new-badge">NEW!</span>' if is_new else ''
+                            title_esc = html.escape(item['title']) # 防止標題破壞 HTML
                             text_style = 'class="read-text"' if is_selected else ""
                             
-                            st.markdown(f"""
-                                <div class="news-item-row">
-                                    {new_badge_html}
-                                    <a href="{link}" target="_blank" {text_style}>{item['title']}</a>
-                                    <div class="news-time">{item['time_str']}</div>
-                                </div>
-                            """, unsafe_allow_html=True)
+                            # 緊湊 HTML，無多餘空白
+                            item_html = f'<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{title_esc}</a><div class="news-time">{item["time_str"]}</div></div>'
+                            st.markdown(item_html, unsafe_allow_html=True)
