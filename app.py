@@ -48,49 +48,33 @@ st.markdown("""
         transition: opacity 0.3s ease;
     }
 
-    .news-item-row:hover .new-badge {
-        opacity: 0;
-    }
+    .news-item-row:hover .new-badge { opacity: 0; }
     
-    /* 連結與文字 */
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* 卡片標題 */
+    /* --- 卡片標題 (Sticky Header) --- */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 10px 15px;
-        background-color: #ffffff; 
-        border: 1px solid #e2e8f0;
-        border-bottom: none; 
-        border-top-left-radius: 8px; 
-        border-top-right-radius: 8px;
+        padding: 12px 0px; /* 上下內距 */
+        background-color: #ffffff; /* 必須是不透明背景 */
+        border-bottom: 2px solid #f1f5f9;
         display: flex; 
         justify-content: space-between; 
         align-items: center;
-        margin-bottom: -15px; 
-        position: relative;
-        z-index: 10;
-    }
-
-    /* 確保標題黏在頂部 */
-    div[data-testid="stVerticalBlock"] > div:has(.news-source-header) {
+        
+        /* 關鍵：黏在容器頂部 */
         position: sticky;
         top: 0;
-        z-index: 9999; 
-        background-color: #ffffff;
-        border-bottom: 2px solid #f1f5f9;
-        margin-bottom: 10px;
-        margin-top: -15px;
-        padding-top: 10px;
+        z-index: 50;
+        margin-bottom: 5px;
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
     
-    /* 回到頂部按鈕 */
     .header-btn {
         background: transparent;
         border: 1px solid #e2e8f0;
@@ -102,11 +86,7 @@ st.markdown("""
         margin-left: 8px;
         transition: all 0.2s;
     }
-    .header-btn:hover {
-        background-color: #e0e7ff;
-        color: #2563eb;
-        border-color: #2563eb;
-    }
+    .header-btn:hover { background-color: #e0e7ff; color: #2563eb; border-color: #2563eb; }
     
     .news-item-row { padding: 8px 5px; border-bottom: 1px solid #f1f5f9; }
     .news-item-row:last-child { border-bottom: none; }
@@ -115,48 +95,27 @@ st.markdown("""
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
     
-    /* 容器樣式微調 */
-    div[data-testid="stVerticalBlockBorderWrapper"] > div {
-        border-top-left-radius: 0 !important;
-        border-top-right-radius: 0 !important;
-        border-color: #e2e8f0 !important;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-        background-color: white;
+    /* 調整 Container 內距，讓 Header 貼頂 */
+    div[data-testid="stVerticalScrollArea"] {
+        padding-top: 0 !important;
     }
     
-    /* 移除原生 Padding */
-    div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] {
-        padding-top: 0rem;
-    }
-
     div[data-testid="stDialog"] { border-radius: 15px; }
     .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
     
-    /* --- 關鍵修改：手機版 RWD 優化 --- */
+    /* 手機版優化 */
     @media (max-width: 768px) {
-        /* 手機版：限制高度，恢復捲軸，避免列表無限長 */
-        div[data-testid="stVerticalBlockBorderWrapper"] > div > div[data-testid="stVerticalScrollArea"] {
-            height: 450px !important;  /* 比桌面版稍微短一點，留出空間 */
+        /* 手機版保持捲軸，但稍微縮短高度以免佔滿螢幕 */
+        div[data-testid="stVerticalScrollArea"] {
+            height: 450px !important;
             max-height: 450px !important;
-            overflow-y: auto !important;
         }
-        
-        /* 增加卡片之間的間距，創造「安全滑動區」 */
-        div[data-testid="column"] {
-            margin-bottom: 40px !important; /* 增加底部間距 */
-            padding-bottom: 10px;
-            border-bottom: 2px dashed #e2e8f0; /* 視覺提示分隔 */
-        }
-
-        /* 確保回到頂部按鈕在手機上也顯示 */
+        div[data-testid="column"] { margin-bottom: 20px !important; }
         .header-btn { display: inline-block !important; }
     }
 
     /* 靜默更新 */
-    .stApp, div[data-testid="stAppViewContainer"] {
-        opacity: 1 !important;
-        transition: none !important;
-    }
+    .stApp, div[data-testid="stAppViewContainer"] { opacity: 1 !important; transition: none !important; }
     header .stDecoration { display: none !important; }
     div[data-testid="stStatusWidget"] { visibility: hidden; }
     div.block-container { min-height: 100vh; }
@@ -193,12 +152,10 @@ def resolve_google_url(url):
         soup = BeautifulSoup(html_content, 'html.parser')
         
         link_with_data = soup.find('a', attrs={'data-n-url': True})
-        if link_with_data:
-            return link_with_data['data-n-url']
+        if link_with_data: return link_with_data['data-n-url']
 
         match = re.search(r'window\.location\.replace\("(.+?)"\)', html_content)
-        if match:
-            return match.group(1).encode('utf-8').decode('unicode_escape')
+        if match: return match.group(1).encode('utf-8').decode('unicode_escape')
             
         links = soup.find_all('a', href=True)
         for link in links:
@@ -220,8 +177,7 @@ def extract_time_from_html(soup):
             meta = soup.find('meta', attrs=tag)
             if meta and meta.get('content'):
                 dt_str = meta['content']
-                if 'T' in dt_str:
-                    return dt_str.replace('T', ' ').split('+')[0][:16]
+                if 'T' in dt_str: return dt_str.replace('T', ' ').split('+')[0][:16]
                 return dt_str[:16]
         return None
     except:
@@ -249,10 +205,8 @@ def fetch_full_article(url, summary_fallback=""):
             content_div = soup.find(id="pressrelease") or soup.find(class_="content") or soup.find(id="content")
             if content_div:
                 text_spans = content_div.find_all('span', style=lambda x: x and 'font-size' in x)
-                if text_spans:
-                    raw_text = "\n".join([s.get_text() for s in text_spans])
-                else:
-                    raw_text = content_div.get_text(separator="\n")
+                if text_spans: raw_text = "\n".join([s.get_text() for s in text_spans])
+                else: raw_text = content_div.get_text(separator="\n")
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
@@ -264,8 +218,7 @@ def fetch_full_article(url, summary_fallback=""):
 
         elif "hk01.com" in url:
             content_div = soup.find('div', class_=re.compile(r'article-content|article_content'))
-            if content_div:
-                paragraphs = content_div.find_all(['p', 'div.text-paragraph'], recursive=True)
+            if content_div: paragraphs = content_div.find_all(['p', 'div.text-paragraph'], recursive=True)
 
         elif "on.cc" in url:
             content_div = soup.find(class_="breakingNewsContent") or soup.find(class_="news_content")
@@ -278,13 +231,11 @@ def fetch_full_article(url, summary_fallback=""):
 
         elif "mingpao.com" in url:
             content_div = soup.find(class_="txt4") 
-            if content_div:
-                paragraphs = content_div.find_all('p')
+            if content_div: paragraphs = content_div.find_all('p')
 
         elif "hkej.com" in url:
             content_div = soup.find(id="article-content")
-            if content_div:
-                paragraphs = content_div.find_all('p')
+            if content_div: paragraphs = content_div.find_all('p')
 
         elif "rthk.hk" in url:
             content_div = soup.find(class_="itemFullText")
@@ -299,11 +250,9 @@ def fetch_full_article(url, summary_fallback=""):
             content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content', 'body']))
             if content_area:
                 paragraphs = content_area.find_all(['p', 'div'], recursive=False)
-                if not paragraphs:
-                    paragraphs = content_area.find_all('p')
+                if not paragraphs: paragraphs = content_area.find_all('p')
         
-        if not paragraphs:
-            paragraphs = soup.find_all('p')
+        if not paragraphs: paragraphs = soup.find_all('p')
 
         clean_text = []
         for p in paragraphs:
@@ -324,10 +273,8 @@ def is_new_news(timestamp):
     if not timestamp: return False
     try:
         now = datetime.datetime.now(HK_TZ)
-        if timestamp.tzinfo is None:
-            timestamp = HK_TZ.localize(timestamp)
-        else:
-            timestamp = timestamp.astimezone(HK_TZ)
+        if timestamp.tzinfo is None: timestamp = HK_TZ.localize(timestamp)
+        else: timestamp = timestamp.astimezone(HK_TZ)
         diff = (now - timestamp).total_seconds() / 60
         return 0 <= diff <= 30
     except:
@@ -466,17 +413,17 @@ def get_all_news_data_parallel(limit=100):
         {"name": "政府新聞（中文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_zh.xml", "color": "#E74C3C", 'backup_query': 'site:info.gov.hk'},
         {"name": "政府新聞（英文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_en.xml", "color": "#C0392B", 'backup_query': 'site:info.gov.hk'},
         {"name": "RTHK", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800", 'backup_query': 'site:news.rthk.hk'},
-        {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news", "color": "#7C3AED", 'backup_query': 'site:hk.on.cc'},
-        {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
         {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A", 'backup_query': 'site:news.now.com/home/local'},
         {"name": "HK01", "type": "api_hk01", "url": "https://web-data.api.hk01.com/v2/feed/category/0", "color": "#2563EB", 'backup_query': 'site:hk01.com'},
+        {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news?limit=200", "color": "#7C3AED", 'backup_query': 'site:hk.on.cc'},
         {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316", 'backup_query': 'site:stheadline.com'},
+        {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
         {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7", 'backup_query': 'site:i-cable.com'},
-        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index", "color": "#64748B", 'backup_query': 'site:hkej.com'},
+        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index?limit=200", "color": "#64748B", 'backup_query': 'site:hkej.com'},
     ]
 
     results_map = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
         future_to_source = {executor.submit(fetch_single_source, conf, limit): conf for conf in configs}
         for future in concurrent.futures.as_completed(future_to_source):
             try:
@@ -522,10 +469,6 @@ with st.sidebar:
     
     st.divider()
     
-    # news_limit = st.slider("顯示新聞數量", min_value=5, max_value=100, value=30)
-    # 取消滑桿，預設全顯示 (上限100)
-    news_limit = 100
-    
     select_count = len(st.session_state.selected_links)
     st.metric("已選新聞", f"{select_count} 篇")
     
@@ -533,14 +476,13 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
-            # 這裡只設置狀態，不進行耗時操作
             st.session_state.show_preview = True
             st.rerun()
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
-# 抓取資料
-news_data_map, source_configs = get_all_news_data_parallel(news_limit)
+# 抓取資料 (預設上限 100 以顯示當天所有)
+news_data_map, source_configs = get_all_news_data_parallel(100)
 
 all_flat_news = []
 for name, items in news_data_map.items():
@@ -580,22 +522,22 @@ for row in rows:
             name = conf['name']
             items = news_data_map.get(name, [])
             
-            # 使用自訂標題 (嵌入按鈕)
-            st.markdown(f"""
-                <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
-                    <div style="display:flex; align-items:center;">
-                        <span>{name}</span>
-                        <!-- 增強版 JS：自動尋找最近的可滾動容器 -->
-                        <button class="header-btn" onclick="var el=this.closest('[data-testid=\\'stVerticalBlock\\']').querySelector('[data-testid=\\'stVerticalScrollArea\\']'); if(el) el.scrollTop = 0;" title="回到最新">
-                            ⬆
-                        </button>
-                    </div>
-                    <span class='status-badge'>{len(items)} 則</span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # 使用 Streamlit 原生容器，高度固定，自動產生捲軸
+            # 卡片容器 (Header + Scrollable Area)
             with st.container(height=600, border=True):
+                # 嵌入 HTML 標題與按鈕
+                # 這裡將 Header 放在容器內的第一個元素，並透過 CSS sticky 固定
+                st.markdown(f"""
+                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
+                        <div style="display:flex; align-items:center;">
+                            <span>{name}</span>
+                            <button class="header-btn" onclick="var el=this.closest('[data-testid=\\'stVerticalBlock\\']').querySelector('[data-testid=\\'stVerticalScrollArea\\']'); if(el) el.scrollTop = 0;" title="回到最新">
+                                ⬆
+                            </button>
+                        </div>
+                        <span class='status-badge'>{len(items)} 則</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                
                 if not items:
                     st.caption("暫無資料")
                 else:
@@ -619,4 +561,3 @@ for row in rows:
                             
                             item_html = f'<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{title_esc}</a><div class="news-time">{item["time_str"]}</div></div>'
                             st.markdown(item_html, unsafe_allow_html=True)
-
