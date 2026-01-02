@@ -33,10 +33,7 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
-    /* 防止畫面跳動 */
-    div.block-container { min-height: 100vh; }
-    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
-
+    /* 閃爍特效 */
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
         color: #ef4444;
@@ -47,52 +44,70 @@ st.markdown("""
         display: inline-block;
         vertical-align: middle;
         opacity: 1;
-        transition: opacity 999999s ease-in-out;
+        transition: opacity 0.3s ease;
     }
 
-    .news-item-row:hover .new-badge {
-        opacity: 0;
-        animation: none;
-        transition: opacity 0s;
-    }
+    .news-item-row:hover .new-badge { opacity: 0; }
     
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
+    /* 一體化卡片容器 */
+    .source-card {
+        background-color: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        border: 1px solid #e2e8f0;
+        height: 600px; /* 固定高度 */
+        display: flex;
+        flex-direction: column;
+        overflow: hidden; /* 確保圓角不被內容切掉 */
+        margin-bottom: 20px;
+    }
+
+    /* 卡片標題 (固定在頂部) */
     .news-source-header { 
-        font-size: 1rem; font-weight: bold; color: #1e293b; padding: 12px 15px;
-        background-color: #ffffff; border-bottom: 2px solid #f1f5f9;
-        border-top-left-radius: 10px; border-top-right-radius: 10px;
-        display: flex; justify-content: space-between; align-items: center;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+        font-size: 1rem; 
+        font-weight: bold; 
+        color: #1e293b; 
+        padding: 12px 16px;
+        background-color: #ffffff; 
+        border-bottom: 1px solid #f1f5f9;
+        display: flex; 
+        justify-content: space-between; 
+        align-items: center;
+        flex: 0 0 auto; /* 不縮放 */
+        z-index: 10;
     }
     
-    .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
-    
-    /* 新聞列表容器：固定高度 + 捲軸 */
-    .news-list-container {
-        background-color: #ffffff; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; border-top: none;
-        padding-bottom: 5px; 
-        
-        /* 關鍵修改：固定高度，超過則顯示 Scroll Bar */
-        height: 500px;       /* 高度大約可放 10 條新聞 */
-        overflow-y: auto;    /* 啟用垂直捲動 */
+    /* 內容捲動區 */
+    .news-scroll-area {
+        flex: 1 1 auto; /* 自動填滿剩餘空間 */
+        overflow-y: auto; /* 垂直捲動 */
+        padding-bottom: 10px;
+        background-color: #ffffff;
     }
+    
+    /* 美化捲軸 */
+    .news-scroll-area::-webkit-scrollbar { width: 6px; }
+    .news-scroll-area::-webkit-scrollbar-track { background: #f8fafc; }
+    .news-scroll-area::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    .news-scroll-area::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
-    /* 美化捲軸 (Chrome, Safari) */
-    .news-list-container::-webkit-scrollbar { width: 6px; }
-    .news-list-container::-webkit-scrollbar-track { background: #f8fafc; }
-    .news-list-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-    .news-list-container::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-    .news-item-row { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; transition: background-color 0.1s; }
+    /* 新聞項目列 */
+    .news-item-row { 
+        padding: 10px 16px; 
+        border-bottom: 1px solid #f1f5f9; 
+        transition: background-color 0.1s; 
+    }
     .news-item-row:hover { background-color: #f8fafc; }
     .news-item-row:last-child { border-bottom: none; }
     
     .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
+    .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
+
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
     div[data-testid="stDialog"] { border-radius: 15px; }
@@ -120,7 +135,6 @@ def resolve_google_url(url):
     """ 強力還原 Google News 真實連結 """
     if "news.google.com" not in url:
         return url
-    
     try:
         session = requests.Session()
         session.headers.update(HEADERS)
@@ -175,23 +189,17 @@ def fetch_full_article(url, summary_fallback=""):
         return summary_fallback if summary_fallback else "(連結還原失敗，請點擊連結查看)", None
 
     try:
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        r = session.get(url, timeout=15) 
+        r = requests.get(url, headers=HEADERS, timeout=15)
         r.encoding = r.apparent_encoding 
         soup = BeautifulSoup(r.text, 'html.parser')
         
         real_time = extract_time_from_html(soup)
         
-        # 移除干擾元素
         for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'iframe', 'noscript', 'aside', 'form', 'button', 'input', '.ad', '.advertisement', '.related-news', '.hidden', '.copyright', '.share-bar', '.video-player', '.recommendation']):
             tag.decompose()
 
         paragraphs = []
         
-        # --- 1. 針對特定網站的精準抓取 ---
-        
-        # 政府新聞網
         if "info.gov.hk" in url:
             content_div = soup.find(id="pressrelease") or soup.find(class_="content") or soup.find(id="content")
             if content_div:
@@ -203,20 +211,17 @@ def fetch_full_article(url, summary_fallback=""):
                 lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                 return "\n\n".join(lines), real_time
 
-        # 星島 Stheadline
         elif "stheadline.com" in url:
             content_div = soup.find('div', class_='paragraph') or soup.find('div', class_='article-content') or soup.find('section', class_='article-body')
             if content_div:
                 paragraphs = content_div.find_all(['p', 'div'], recursive=False)
                 paragraphs = [p for p in paragraphs if len(p.get_text(strip=True)) > 0]
 
-        # HK01
         elif "hk01.com" in url:
             content_div = soup.find('div', class_=re.compile(r'article-content|article_content'))
             if content_div:
                 paragraphs = content_div.find_all(['p', 'div.text-paragraph'], recursive=True)
 
-        # 東網 on.cc
         elif "on.cc" in url:
             content_div = soup.find(class_="breakingNewsContent") or soup.find(class_="news_content")
             if content_div:
@@ -226,19 +231,16 @@ def fetch_full_article(url, summary_fallback=""):
                     lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                     return "\n\n".join(lines), real_time
 
-        # 明報 Mingpao
         elif "mingpao.com" in url:
             content_div = soup.find(class_="txt4") 
             if content_div:
                 paragraphs = content_div.find_all('p')
 
-        # 信報 HKEJ
         elif "hkej.com" in url:
             content_div = soup.find(id="article-content")
             if content_div:
                 paragraphs = content_div.find_all('p')
 
-        # RTHK
         elif "rthk.hk" in url:
             content_div = soup.find(class_="itemFullText")
             if content_div:
@@ -248,7 +250,6 @@ def fetch_full_article(url, summary_fallback=""):
                     lines = [line.strip() for line in raw_text.splitlines() if len(line.strip()) > 0]
                     return "\n\n".join(lines), real_time
 
-        # --- 2. 通用智慧抓取 ---
         if not paragraphs:
             content_area = soup.find('div', class_=lambda x: x and any(term in x.lower() for term in ['article', 'content', 'news-text', 'story', 'post-body', 'main-text', 'detail', 'entry-content', 'body']))
             if content_area:
@@ -256,7 +257,6 @@ def fetch_full_article(url, summary_fallback=""):
                 if not paragraphs:
                     paragraphs = content_area.find_all('p')
         
-        # --- 3. 兜底方案 ---
         if not paragraphs:
             paragraphs = soup.find_all('p')
 
@@ -291,7 +291,7 @@ def is_new_news(timestamp):
 # --- 3. 抓取邏輯 (並行處理) ---
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_google_proxy(site_query, site_name, color, limit=10):
+def fetch_google_proxy(site_query, site_name, color, limit=30):
     query = urllib.parse.quote(site_query)
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
     try:
@@ -324,7 +324,7 @@ def fetch_google_proxy(site_query, site_name, color, limit=10):
         return []
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_single_source(config, limit=10):
+def fetch_single_source(config, limit=30):
     data = []
     today_date = datetime.datetime.now(HK_TZ).date() 
 
@@ -394,7 +394,7 @@ def fetch_single_source(config, limit=10):
     return config['name'], data[:limit]
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_all_news_data_parallel(limit=10):
+def get_all_news_data_parallel(limit=30):
     RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app" 
     ANTIDRUG_RSS = "https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+保安局+OR+鄧炳強+OR+戰時炸彈+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
 
@@ -461,7 +461,8 @@ with st.sidebar:
     
     st.divider()
     
-    news_limit = st.slider("顯示新聞數量", min_value=5, max_value=20, value=10)
+    # 預設數量改為 30，最大 100
+    news_limit = st.slider("顯示新聞數量", min_value=5, max_value=100, value=30)
     
     st.divider()
     
@@ -472,20 +473,19 @@ with st.sidebar:
         if select_count == 0:
             st.warning("請先勾選新聞！")
         else:
-            # 這裡只設置狀態，不進行耗時操作
             st.session_state.show_preview = True
             st.rerun()
 
     st.button("🗑️ 一鍵清空選擇", use_container_width=True, on_click=clear_all_selections)
 
-# 抓取資料 (傳入滑桿的數值)
+# 抓取資料
 news_data_map, source_configs = get_all_news_data_parallel(news_limit)
 
 all_flat_news = []
 for name, items in news_data_map.items():
     all_flat_news.extend(items)
 
-# 處理生成邏輯 (在主流程中執行)
+# 處理生成邏輯
 if st.session_state.show_preview:
     if not st.session_state.generated_text:
         with st.spinner("正在提取全文..."):
@@ -518,22 +518,24 @@ for row in rows:
         with col:
             name = conf['name']
             items = news_data_map.get(name, [])
+            
+            # 使用自訂容器來渲染卡片 (Header + Scrollable List)
+            # 這裡我們將 Header 和 List 渲染為兩個區塊，但透過 CSS 將它們無縫接合
             st.markdown(f"""
-                <div class='news-source-header' style='border-left: 5px solid {conf['color']}; padding-left: 10px;'>
-                    {name}
-                    <span class='status-badge'>{len(items)} 則</span>
-                </div>
+                <div class="source-card">
+                    <div class="news-source-header" style="border-left: 5px solid {conf['color']}">
+                        <span>{name}</span>
+                        <span class="status-badge">{len(items)} 則</span>
+                    </div>
+                    <div class="news-scroll-area">
             """, unsafe_allow_html=True)
-            st.markdown('<div class="news-list-container">', unsafe_allow_html=True)
+            
             if not items:
-                st.markdown('<div style="padding:20px; text-align:center; color:#ccc;">暫無資料 (無今日新聞)</div>', unsafe_allow_html=True)
+                st.markdown('<div style="padding:20px; text-align:center; color:#ccc;">暫無資料</div>', unsafe_allow_html=True)
             else:
                 for item in items:
                     link = item['link']
-                    
-                    # --- NEW 邏輯 (30分鐘) ---
                     is_new = is_new_news(item['timestamp'])
-                    
                     is_selected = link in st.session_state.selected_links
                     
                     c1, c2 = st.columns([0.15, 0.85])
@@ -545,10 +547,16 @@ for row in rows:
                                 st.session_state.selected_links.add(k)
                         st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_state)
                     with c2:
-                        # CSS hover 隱藏 new badge
                         new_badge_html = f'<span class="new-badge">NEW!</span>' if is_new else ''
                         text_style = 'class="read-text"' if is_selected else ""
-                        
-                        item_html = f"""<div class="news-item-row">{new_badge_html}<a href="{link}" target="_blank" {text_style}>{item['title']}</a><div class="news-time">{item['time_str']}</div></div>"""
+                        item_html = f"""
+                        <div class="news-item-row">
+                            {new_badge_html}
+                            <a href="{link}" target="_blank" {text_style}>{item['title']}</a>
+                            <div class="news-time">{item['time_str']}</div>
+                        </div>
+                        """
                         st.markdown(item_html, unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # 關閉卡片容器的 div
+            st.markdown('</div></div>', unsafe_allow_html=True)
