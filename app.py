@@ -12,6 +12,10 @@ from streamlit_autorefresh import st_autorefresh
 import concurrent.futures
 import re
 import html
+import urllib3
+
+# 忽略 SSL 警告 (針對 verify=False)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 設定預設編碼
 try:
@@ -406,8 +410,8 @@ def fetch_single_source(config, limit=100):
                      })
 
         elif config['type'] == 'rss':
-            # 增加 timeout 到 25 秒，應對 Railway Cold Start
-            r = requests.get(config['url'], headers=HEADERS, timeout=25)
+            # 增加 timeout 到 30 秒，並忽略 SSL 驗證 (verify=False) 解決自簽憑證問題
+            r = requests.get(config['url'], headers=HEADERS, timeout=30, verify=False)
             feed = feedparser.parse(r.content)
             
             for entry in feed.entries:
@@ -435,7 +439,7 @@ def fetch_single_source(config, limit=100):
                 })
 
     except Exception as e:
-        # 發生錯誤時保持 data 為空，將觸發 backup_query
+        # 發生錯誤時保持 data 為空，將觸發 backup_query (如果有的話)
         print(f"Error fetching {config['name']}: {e}") 
         data = []
 
@@ -463,10 +467,11 @@ def get_all_news_data_parallel(limit=300):
         {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316", 'backup_query': 'site:stheadline.com'},
         {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A", 'backup_query': 'site:news.now.com/home/local'},
         
-        # 第三行 (4個) - 修改了最後一個信報，改回使用 RSSHub
+        # 第三行 (4個)
         {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
         {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7", 'backup_query': 'site:i-cable.com'},
-        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index?limit=300", "color": "#64748B", 'backup_query': 'site:hkej.com'},
+        # 修改：信報移除 limit 參數以減輕負擔，並移除 backup_query 以避免出現 Google News
+        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index", "color": "#64748B"},
     ]
 
     results_map = {}
