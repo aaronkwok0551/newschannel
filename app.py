@@ -333,9 +333,9 @@ def fetch_google_proxy(site_query, site_name, color, limit=100):
             if hasattr(entry, 'published_parsed'):
                 dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
             
-            # 修正：允許過去 24 小時內的新聞，而不僅僅是"今天" (避免跨夜問題)
+            # 修正：放寬到 7 天內新聞，避免因來源日期較舊而被隱藏
             age_seconds = (now - dt_obj).total_seconds()
-            if age_seconds > 86400 or age_seconds < -3600: 
+            if age_seconds > 86400 * 7 or age_seconds < -3600: 
                 continue
 
             dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
@@ -384,7 +384,8 @@ def fetch_single_source(config, limit=100):
                      else:
                          dt_obj = datetime.datetime.now(HK_TZ)
                      
-                     if (now - dt_obj).total_seconds() > 86400: continue
+                     # 放寬檢查
+                     if (now - dt_obj).total_seconds() > 86400 * 7: continue
                      
                      if title and link:
                         data.append({
@@ -407,7 +408,8 @@ def fetch_single_source(config, limit=100):
                      dt_obj = datetime.datetime.now(HK_TZ)
                      if publish_time: dt_obj = datetime.datetime.fromtimestamp(publish_time, HK_TZ)
                      
-                     if (now - dt_obj).total_seconds() > 86400: continue
+                     # 放寬檢查
+                     if (now - dt_obj).total_seconds() > 86400 * 7: continue
 
                      if title and link:
                          data.append({
@@ -440,8 +442,17 @@ def fetch_single_source(config, limit=100):
                     else:
                         dt_obj = datetime.datetime.now(HK_TZ)
                     
+                    # --- 特別修正：信報來源日期錯誤 (RSSHub 落後 7 天)，手動校正 ---
+                    if config['name'] == "信報即時":
+                        dt_obj = dt_obj + datetime.timedelta(days=7)
+
+                    # 修正：將時間限制放寬，同時因為信報被手動加了7天，要允許這部分通過
                     age_seconds = (now - dt_obj).total_seconds()
-                    if age_seconds > 86400: continue
+                    
+                    # 注意：如果原本是 Dec 29，加7天變成 Jan 5。如果今天是 Jan 5，age_seconds 會很小，符合條件。
+                    # 如果新聞真的是舊的(例如 Dec 20)，加7天變成 Dec 27，age_seconds 會很大，會被過濾。
+                    # 放寬到 7 天是為了其他來源，信報修正後會變成"今天"，所以也符合。
+                    if age_seconds > 86400 * 7 or age_seconds < -86400: continue
 
                     title = entry.title.strip()
                     if "news.google.com" in config['url']:
@@ -491,7 +502,7 @@ def get_all_news_data_parallel(limit=300):
         # 第三行 (4個)
         {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
         {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7", 'backup_query': 'site:i-cable.com'},
-        # 修改：移除 backup_query
+        # 修改：移除 backup_query，確保只顯示信報來源
         {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index", "color": "#64748B"},
     ]
 
