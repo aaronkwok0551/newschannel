@@ -156,9 +156,10 @@ HK_TZ = pytz.timezone('Asia/Hong_Kong')
 UTC_TZ = pytz.timezone('UTC')
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Cookie': 'CONSENT=YES+cb.20210720-07-p0.en+FX+417; '
+    'Accept-Language': 'zh-HK,zh;q=0.9,en;q=0.8',
+    'Connection': 'keep-alive'
 }
 
 # --- 2. 核心功能函式 ---
@@ -172,7 +173,7 @@ def resolve_google_url(url):
     try:
         session = requests.Session()
         session.headers.update(HEADERS)
-        r = session.get(url, allow_redirects=True, timeout=10)
+        r = session.get(url, allow_redirects=True, timeout=15)
         
         if "news.google.com" not in r.url and "google.com" not in r.url:
             return r.url
@@ -219,7 +220,7 @@ def fetch_full_article(url, summary_fallback=""):
     try:
         session = requests.Session()
         session.headers.update(HEADERS)
-        r = session.get(url, timeout=15)
+        r = session.get(url, timeout=20)
         r.encoding = r.apparent_encoding 
         soup = BeautifulSoup(r.text, 'html.parser')
         
@@ -318,7 +319,7 @@ def fetch_google_proxy(site_query, site_name, color, limit=100):
     try:
         feed = feedparser.parse(rss_url)
         news_list = []
-        today_date = datetime.datetime.now(HK_TZ).date() 
+        now = datetime.datetime.now(HK_TZ)
 
         for entry in feed.entries: 
             title = entry.title.rsplit(" - ", 1)[0].strip()
@@ -326,7 +327,9 @@ def fetch_google_proxy(site_query, site_name, color, limit=100):
             if hasattr(entry, 'published_parsed'):
                 dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
             
-            if dt_obj.date() != today_date:
+            # 修正：允許過去 24 小時內的新聞，而不僅僅是"今天" (避免跨夜問題)
+            age_seconds = (now - dt_obj).total_seconds()
+            if age_seconds > 86400 or age_seconds < -3600: # 允許 1 小時未來誤差
                 continue
 
             dt_str = dt_obj.strftime('%Y-%m-%d %H:%M')
@@ -347,12 +350,12 @@ def fetch_google_proxy(site_query, site_name, color, limit=100):
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_single_source(config, limit=100):
     data = []
-    today_date = datetime.datetime.now(HK_TZ).date() 
+    now = datetime.datetime.now(HK_TZ)
 
     try:
         if config['type'] == 'now_api':
              api_url = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1"
-             r = requests.get(api_url, headers=HEADERS, timeout=10)
+             r = requests.get(api_url, headers=HEADERS, timeout=20)
              data_list = r.json()
              items_list = []
              if isinstance(data_list, list): items_list = data_list
@@ -371,7 +374,8 @@ def fetch_single_source(config, limit=100):
                  else:
                      dt_obj = datetime.datetime.now(HK_TZ)
                  
-                 if dt_obj.date() != today_date: continue
+                 # 24小時檢查
+                 if (now - dt_obj).total_seconds() > 86400: continue
                  
                  if title and link:
                     data.append({
@@ -381,7 +385,7 @@ def fetch_single_source(config, limit=100):
                     })
         
         elif config['type'] == 'api_hk01':
-             r = requests.get(config['url'], headers=HEADERS, params={"limit": 200}, timeout=10)
+             r = requests.get(config['url'], headers=HEADERS, params={"limit": 200}, timeout=20)
              items_list = r.json().get('items', [])
              for item in items_list:
                  data_obj = item.get('data', {})
@@ -390,7 +394,10 @@ def fetch_single_source(config, limit=100):
                  publish_time = data_obj.get('publishTime')
                  dt_obj = datetime.datetime.now(HK_TZ)
                  if publish_time: dt_obj = datetime.datetime.fromtimestamp(publish_time, HK_TZ)
-                 if dt_obj.date() != today_date: continue
+                 
+                 # 24小時檢查
+                 if (now - dt_obj).total_seconds() > 86400: continue
+
                  if title and link:
                      data.append({
                         'source': config['name'], 'title': title, 'link': link, 
@@ -399,15 +406,19 @@ def fetch_single_source(config, limit=100):
                      })
 
         elif config['type'] == 'rss':
-            r = requests.get(config['url'], headers=HEADERS, timeout=10)
+            # 增加 timeout 到 25 秒，應對 Railway Cold Start
+            r = requests.get(config['url'], headers=HEADERS, timeout=25)
             feed = feedparser.parse(r.content)
+            
             for entry in feed.entries:
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
                 else:
                     dt_obj = datetime.datetime.now(HK_TZ)
                 
-                if dt_obj.date() != today_date: continue
+                # 24小時檢查 (取代原本嚴格的 date() != today_date)
+                age_seconds = (now - dt_obj).total_seconds()
+                if age_seconds > 86400: continue
 
                 title = entry.title.strip()
                 if "news.google.com" in config['url']:
@@ -423,7 +434,9 @@ def fetch_single_source(config, limit=100):
                     'timestamp': dt_obj, 'color': config['color'], 'method': 'RSS', 'summary': summary
                 })
 
-    except Exception:
+    except Exception as e:
+        # 發生錯誤時保持 data 為空，將觸發 backup_query
+        print(f"Error fetching {config['name']}: {e}") 
         data = []
 
     if not data and config.get('backup_query'):
