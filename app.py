@@ -34,6 +34,28 @@ st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
     
+    /* --- 關鍵修改：防止更新時畫面變淡 (Silent Rerun) --- */
+    
+    /* 1. 強制主容器不透明度永遠為 1，取消過渡動畫 */
+    .stApp, div[data-testid="stAppViewContainer"] {
+        opacity: 1 !important;
+        transition: none !important;
+    }
+    
+    /* 2. 隱藏頂部彩虹載入條 */
+    header .stDecoration {
+        display: none !important;
+    }
+    
+    /* 3. 隱藏右上角 Running 動畫 (可選，讓更新完全無感) */
+    div[data-testid="stStatusWidget"] {
+        visibility: hidden;
+    }
+
+    /* 防止畫面跳動 */
+    div.block-container { min-height: 100vh; }
+    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
+    
     /* 閃爍特效 */
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
@@ -56,28 +78,27 @@ st.markdown("""
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* 卡片標題 (Sticky Header) */
+    /* 卡片標題 (Pin 在頂部) */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 15px 20px; /* 增加內距 */
-        background-color: #ffffff; /* 必須是不透明背景 */
+        padding: 15px 10px; /* 增加一點內距 */
+        margin: 0;          /* 移除外距 */
         border-bottom: 2px solid #f1f5f9;
         display: flex; 
         justify-content: space-between; 
         align-items: center;
+        background-color: white; /* 確保背景不透明 */
         
-        /* 關鍵：黏在容器頂部 */
+        /* 關鍵：Sticky 定位 */
         position: sticky;
         top: 0;
-        z-index: 100;
-        margin-top: 0;
+        z-index: 50; /* 確保在內容之上 */
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
     
-    /* 按鈕樣式 */
     .header-btn {
         background: transparent;
         border: 1px solid #e2e8f0;
@@ -91,32 +112,32 @@ st.markdown("""
     }
     .header-btn:hover { background-color: #e0e7ff; color: #2563eb; border-color: #2563eb; }
     
-    /* 新聞列表 */
-    .news-item-row { 
-        padding: 10px 20px; /* 配合 Header 內距 */
-        border-bottom: 1px solid #f1f5f9; 
-    }
+    .news-item-row { padding: 8px 5px; border-bottom: 1px solid #f1f5f9; }
     .news-item-row:last-child { border-bottom: none; }
     .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
-    /* 調整元件間距 */
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
     div[data-testid="column"] { display: flex; align-items: start; }
     
-    /* --- 關鍵佈局修正：移除 Streamlit 容器內建 Padding --- */
-    /* 這樣 Header 才能真正貼在盒子最頂端 */
-    div[data-testid="stVerticalScrollArea"] {
-        padding: 0 !important; 
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        border-top-left-radius: 0 !important;
+        border-top-right-radius: 0 !important;
+        border-color: #e2e8f0 !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        background-color: white;
     }
     
+    div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] { padding-top: 0rem; }
+
     div[data-testid="stDialog"] { border-radius: 15px; }
     .generated-box { border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
     
     /* 手機版優化 */
     @media (max-width: 768px) {
-        div[data-testid="stVerticalScrollArea"] {
+        div[data-testid="stVerticalBlockBorderWrapper"] > div > div[data-testid="stVerticalScrollArea"] {
             height: 450px !important;
             max-height: 450px !important;
+            overflow-y: auto !important;
         }
         div[data-testid="column"] { margin-bottom: 20px !important; }
         .header-btn { display: inline-block !important; }
@@ -291,7 +312,7 @@ def is_new_news(timestamp):
 # --- 3. 抓取邏輯 (並行處理) ---
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_google_proxy(site_query, site_name, color, limit=300):
+def fetch_google_proxy(site_query, site_name, color, limit=100):
     query = urllib.parse.quote(site_query)
     rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
     try:
@@ -324,13 +345,13 @@ def fetch_google_proxy(site_query, site_name, color, limit=300):
         return []
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_single_source(config, limit=300):
+def fetch_single_source(config, limit=100):
     data = []
     today_date = datetime.datetime.now(HK_TZ).date() 
 
     try:
         if config['type'] == 'now_api':
-             api_url = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1&pageSize=50" # 增加 pageSize
+             api_url = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1"
              r = requests.get(api_url, headers=HEADERS, timeout=10)
              data_list = r.json()
              items_list = []
@@ -360,8 +381,7 @@ def fetch_single_source(config, limit=300):
                     })
         
         elif config['type'] == 'api_hk01':
-             # 增加 limit 參數以獲取更多新聞，確保抓取到今天所有的
-             r = requests.get(config['url'], headers=HEADERS, params={"limit": 300}, timeout=10)
+             r = requests.get(config['url'], headers=HEADERS, params={"limit": 200}, timeout=10)
              items_list = r.json().get('items', [])
              for item in items_list:
                  data_obj = item.get('data', {})
@@ -424,24 +444,20 @@ def get_all_news_data_parallel(limit=300):
         {"name": "政府新聞（英文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_en.xml", "color": "#C0392B", 'backup_query': 'site:info.gov.hk'},
         {"name": "RTHK", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800", 'backup_query': 'site:news.rthk.hk'},
         
-        # 第二行 (4個) - 更新順序
+        # 第二行 (4個)
         {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news?limit=300", "color": "#7C3AED", 'backup_query': 'site:hk.on.cc'},
         {"name": "HK01", "type": "api_hk01", "url": "https://web-data.api.hk01.com/v2/feed/category/0", "color": "#2563EB", 'backup_query': 'site:hk01.com'},
         {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316", 'backup_query': 'site:stheadline.com'},
         {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A", 'backup_query': 'site:news.now.com/home/local'},
         
-        # 第三行 (4個)
+        # 第三行 (4個) - 修改了最後一個信報，改回使用 RSSHub
         {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
         {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7", 'backup_query': 'site:i-cable.com'},
-        {"name": "經濟日報", "type": "rss", "url": "https://www.hket.com/rss/hongkong", "color": "#7C3AED", 'backup_query': 'site:hket.com'},
         {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index?limit=300", "color": "#64748B", 'backup_query': 'site:hkej.com'},
-        
-        # 第四行 (1個)
-        {"name": "巴士的報", "type": "rss", "url": "https://www.bastillepost.com/hongkong/feed", "color": "#7C3AED", 'backup_query': 'site:bastillepost.com'},
     ]
 
     results_map = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
         future_to_source = {executor.submit(fetch_single_source, conf, limit): conf for conf in configs}
         for future in concurrent.futures.as_completed(future_to_source):
             try:
@@ -541,19 +557,21 @@ for row in rows:
             name = conf['name']
             items = news_data_map.get(name, [])
             
-            st.markdown(f"""
-                <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
-                    <div style="display:flex; align-items:center;">
-                        <span>{name}</span>
-                        <button class="header-btn" onclick="var el=this.closest('[data-testid=\\'stVerticalBlock\\']').querySelector('[data-testid=\\'stVerticalScrollArea\\']'); if(el) el.scrollTop = 0;" title="回到最新">
-                            ⬆
-                        </button>
-                    </div>
-                    <span class='status-badge'>{len(items)} 則</span>
-                </div>
-            """, unsafe_allow_html=True)
-            
+            # 卡片容器
             with st.container(height=600, border=True):
+                # 將 Header 移入 Container 內部，並透過 CSS 進行 Sticky 定位
+                st.markdown(f"""
+                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
+                        <div style="display:flex; align-items:center;">
+                            <span>{name}</span>
+                            <button class="header-btn" onclick="var el=this.closest('[data-testid=\\'stVerticalBlock\\']').querySelector('[data-testid=\\'stVerticalScrollArea\\']'); if(el) el.scrollTop = 0;" title="回到最新">
+                                ⬆
+                            </button>
+                        </div>
+                        <span class='status-badge'>{len(items)} 則</span>
+                    </div>
+                """, unsafe_allow_html=True)
+
                 if not items:
                     st.caption("暫無資料")
                 else:
