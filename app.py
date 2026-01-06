@@ -421,36 +421,38 @@ def fetch_single_source(config, limit=100):
                             'timestamp': dt_obj, 'color': config['color'], 'method': 'API', 'summary': "" 
                          })
         
-        # 新增文匯報 JSON 處理邏輯 (加強容錯)
+        # 文匯報 JSON (支援優先顯示更新時間)
         elif config['type'] == 'json_wenweipo':
              r = requests.get(config['url'], headers=HEADERS, timeout=30, verify=False)
              if r.status_code != 200:
                  error_msg = f"API Error: {r.status_code}"
              else:
                  data_json = r.json()
-                 # 修正：使用 or [] 防止 data 為 None 時報錯
                  items_list = data_json.get('data') or []
                  
                  for item in items_list:
                      title = item.get('title', '').strip()
                      link = item.get('url')
-                     pub_date = item.get('publishTime') # e.g., 2026-01-04T20:08:34.000+0000
                      
-                     if pub_date:
+                     # 優先獲取更新時間 'updated'，沒有才用 'publishTime'
+                     date_str = item.get('updated')
+                     if not date_str:
+                         date_str = item.get('publishTime')
+                     
+                     # 解析時間
+                     dt_obj = datetime.datetime.now(HK_TZ) # 預設
+                     if date_str:
                          try:
-                             # 嘗試解析完整格式 (含微秒)
-                             dt_obj = datetime.datetime.strptime(pub_date, "%Y-%m-%dT%H:%M:%S.%f%z")
+                             # 嘗試多種時間格式
+                             dt_obj = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%f%z")
                          except ValueError:
                              try:
-                                 # 嘗試解析無微秒格式
-                                 dt_obj = datetime.datetime.strptime(pub_date, "%Y-%m-%dT%H:%M:%S%z")
+                                 dt_obj = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S%z")
                              except:
-                                 dt_obj = datetime.datetime.now(HK_TZ)
+                                 pass
                          
                          if dt_obj.tzinfo:
                              dt_obj = dt_obj.astimezone(HK_TZ)
-                     else:
-                         dt_obj = datetime.datetime.now(HK_TZ)
                      
                      # 放寬檢查到 7 天
                      if (now - dt_obj).total_seconds() > 86400 * 7: continue
@@ -476,7 +478,6 @@ def fetch_single_source(config, limit=100):
             else:
                 feed = feedparser.parse(r.content)
                 
-                # 檢查解析結果
                 if not feed.entries:
                     if hasattr(feed, 'bozo') and feed.bozo:
                          error_msg = f"RSS Parse Error: {feed.bozo_exception}"
@@ -486,8 +487,11 @@ def fetch_single_source(config, limit=100):
                          error_msg = "No entries found in feed"
                 
                 for entry in feed.entries:
-                    if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                        dt_obj = datetime.datetime.fromtimestamp(time.mktime(entry.published_parsed), UTC_TZ).astimezone(HK_TZ)
+                    # RSS 優先讀取 updated_parsed (更新時間)，沒有才讀 published_parsed (發布時間)
+                    time_struct = getattr(entry, 'updated_parsed', None) or getattr(entry, 'published_parsed', None)
+                    
+                    if time_struct:
+                        dt_obj = datetime.datetime.fromtimestamp(time.mktime(time_struct), UTC_TZ).astimezone(HK_TZ)
                     else:
                         dt_obj = datetime.datetime.now(HK_TZ)
                     
