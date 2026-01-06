@@ -79,14 +79,15 @@ st.markdown("""
     a:hover { color: #2563eb; }
     
     /* --- 關鍵修改：固定標題 (Sticky Header) --- */
-    /* 只針對固定高度容器 (stVerticalBlockBorderWrapper) 內的第一個內容容器進行鎖定 */
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] > div.element-container:first-of-type {
+    /* 使用 :has() 選擇器，精準鎖定包含 .news-source-header 的容器 */
+    div[data-testid="stVerticalBlock"] > div.element-container:has(.news-source-header) {
         position: sticky !important;
         top: 0 !important;
-        z-index: 100 !important;
+        z-index: 999 !important;
         background-color: #ffffff !important;
-        border-bottom: 1px solid #f1f5f9;
-        margin-bottom: 5px;
+        border-bottom: 2px solid #f1f5f9;
+        margin-top: 0px !important;
+        padding-top: 0px !important;
     }
 
     .news-source-header { 
