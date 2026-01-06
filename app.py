@@ -79,26 +79,26 @@ st.markdown("""
     a:hover { color: #2563eb; }
     
     /* --- 關鍵修改：固定標題 (Sticky Header) --- */
-    /* 針對 Streamlit 滾動容器內的第一個元素 (Header) 進行鎖定 */
-    div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] > div:first-child {
+    /* 只針對固定高度容器 (stVerticalBlockBorderWrapper) 內的第一個內容容器進行鎖定 */
+    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] > div.element-container:first-of-type {
         position: sticky !important;
         top: 0 !important;
         z-index: 100 !important;
-        background-color: #ffffff !important; /* 必須有背景色，否則文字會重疊 */
+        background-color: #ffffff !important;
         border-bottom: 1px solid #f1f5f9;
+        margin-bottom: 5px;
     }
 
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 15px 10px; 
+        padding: 12px 10px; 
         margin: 0; 
         display: flex; 
         justify-content: space-between; 
         align-items: center;
         background-color: white; 
-        /* 移除原本內層的 sticky，交給外層容器控制 */
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
