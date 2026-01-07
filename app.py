@@ -67,9 +67,13 @@ st.markdown("""
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* --- 終極修正：解決固定標題「穿孔」問題 --- */
+    /* --- 核心修正：徹底解決固定標題「穿孔」問題 --- */
     
-    /* 1. 針對滾動區域：移除所有間隙，建立堆疊環境 */
+    /* 1. 針對滾動區域：強制移除頂部內距，讓標題能完全貼頂 */
+    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] {
+        padding-top: 0px !important;
+    }
+    
     div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] {
         gap: 0px !important;
         padding-top: 0px !important;
@@ -84,11 +88,11 @@ st.markdown("""
         margin: 0 !important;
         padding: 0 !important;
         width: 100% !important;
-        /* 視覺遮罩：防止 1px 縫隙穿孔 */
-        box-shadow: 0 1px 0 #f1f5f9, 0 4px 6px -2px rgba(0,0,0,0.05); 
+        /* 視覺遮罩：防止 1px 縫隙穿孔，並加入明顯陰影 */
+        box-shadow: 0 4px 10px -2px rgba(0,0,0,0.1); 
         border-bottom: 2px solid #f1f5f9;
-        /* 關鍵：建立獨立渲染層，防止穿透 */
-        transform: translateZ(0); 
+        /* 確保不透明 */
+        opacity: 1 !important;
     }
     
     /* 3. 標題文字區域樣式 */
@@ -96,12 +100,12 @@ st.markdown("""
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 12px 10px;
-        margin: 0;
+        padding: 15px 10px; /* 增加一點高度 */
+        margin: 0; 
         display: flex; 
         justify-content: space-between; 
         align-items: center;
-        background-color: #ffffff !important; /* 確保背景純白 */
+        background-color: #ffffff !important; /* 雙重確保背景純白 */
     }
 
     /* 4. 針對內容區域：確保層級低於標題 */
@@ -131,10 +135,11 @@ st.markdown("""
     
     /* 卡片容器樣式 */
     div[data-testid="stVerticalBlockBorderWrapper"] > div {
-        border-top-left-radius: 8px !important;
-        border-top-right-radius: 8px !important;
+        border-top-left-radius: 10px !important;
+        border-top-right-radius: 10px !important;
         background-color: white;
         overflow: hidden; /* 確保圓角內內容不溢出 */
+        border: 1px solid #e2e8f0;
     }
     
     div[data-testid="column"] { display: flex; align-items: start; }
@@ -142,7 +147,7 @@ st.markdown("""
 
     @media (max-width: 768px) {
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] {
-            height: 450px !important;
+            height: 550px !important; /* 手機版高度 */
         }
     }
 </style>
@@ -364,7 +369,8 @@ for row in rows:
     for col, conf in zip(cols, row):
         with col:
             items = news_data_map.get(conf['name'], [])
-            with st.container(height=600, border=True):
+            # 增加容器高度至 800px，減少滾動頻率
+            with st.container(height=800, border=True):
                 # 標題區 (由 CSS 控制 Sticky 固定，並確保不穿孔)
                 st.markdown(f"""
                     <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
