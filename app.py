@@ -67,16 +67,22 @@ st.markdown("""
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* --- 關鍵：固定標題 (Sticky Header) 且防止穿孔 --- */
-    /* 鎖定包含媒體名稱的容器 */
+    /* --- 核心修正：徹底解決固定標題「穿孔」問題 --- */
+    /* 鎖定包含媒體名稱的容器，並確保其完全不透明 */
     div[data-testid="stVerticalBlock"] > div.element-container:has(.news-source-header) {
         position: sticky !important;
         top: 0 !important;
         z-index: 1000 !important;
         background-color: #ffffff !important;
-        margin-top: -1px !important;
+        /* 封死上下間隙，防止內容滲透 */
+        margin-top: 0px !important;
+        margin-bottom: 0px !important;
         padding-top: 0px !important;
+        padding-bottom: 0px !important;
         width: 100% !important;
+        /* 增加邊框與陰影，加強蓋板效果 */
+        border-bottom: 1px solid #e2e8f0 !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
 
     .news-source-header { 
@@ -89,7 +95,6 @@ st.markdown("""
         justify-content: space-between; 
         align-items: center;
         background-color: white !important;
-        border-bottom: 2px solid #f1f5f9;
     }
     
     .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
@@ -109,14 +114,17 @@ st.markdown("""
     .news-item-row:last-child { border-bottom: none; }
     .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
-    /* 卡片容器邊框樣式 */
+    /* 卡片容器樣式調整，將 Padding 歸零交給內容控制 */
+    div[data-testid="stVerticalBlockBorderWrapper"] > div > div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] {
+        gap: 0rem !important; /* 移除內部元素間隙 */
+    }
+
     div[data-testid="stVerticalBlockBorderWrapper"] > div {
         border-top-left-radius: 8px !important;
         border-top-right-radius: 8px !important;
         background-color: white;
     }
     
-    /* 調整對齊 */
     div[data-testid="column"] { display: flex; align-items: start; }
     .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
 
@@ -345,7 +353,7 @@ for row in rows:
         with col:
             items = news_data_map.get(conf['name'], [])
             with st.container(height=600, border=True):
-                # 標題區 (由 CSS 控制 Sticky 固定)
+                # 標題區 (由 CSS 控制 Sticky 固定，並確保不穿孔)
                 st.markdown(f"""
                     <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
                         <div>{conf['name']}</div>
@@ -363,13 +371,11 @@ for row in rows:
                         
                         c1, c2 = st.columns([0.15, 0.85])
                         with c1:
-                            # 使用連結作為唯一 Key
                             def update_selection(url=link):
                                 if url in st.session_state.selected_links:
                                     st.session_state.selected_links.remove(url)
                                 else:
                                     st.session_state.selected_links.add(url)
-                            
                             st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_selection)
                         with c2:
                             badge = '<span class="new-badge">NEW!</span>' if is_new else ''
