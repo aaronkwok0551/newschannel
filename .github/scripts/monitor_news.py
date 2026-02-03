@@ -97,6 +97,7 @@ def send_telegram(message):
 def check_with_minimax(title, source):
     """Use MiniMax AI to check if news is relevant"""
     api_key = os.environ.get('MINIMAX_API_KEY', '')
+    group_id = os.environ.get('MINIMAX_GROUP_ID', '')  # Optional for some plans
     
     # Regions to EXCLUDE
     exclude_regions = ['日本', '台灣', '珠海', '澳門', '澳洲', '中國', '內地', '大陸', '深圳', '廣州', '北京', '上海', '泰國', '馬來西亞', '新加坡', '韓國', '英國', '美國', '加拿大']
@@ -122,6 +123,11 @@ def check_with_minimax(title, source):
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+        
+        # Add Group ID header if provided (for some plans)
+        if group_id:
+            headers["X-GroupId"] = group_id
+        
         data = {
             "model": "MiniMax-M2.1",
             "messages": [
@@ -158,15 +164,17 @@ def check_with_minimax(title, source):
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         print(f"   📡 API response status: {response.status_code}")
-        print(f"   📝 Raw response (first 300 chars): {response.text[:300]}")
         
         if response.status_code == 200:
             result = response.json()
             
             # Check for API key error
             if result.get('base_resp', {}).get('status_code') == 2049:
-                print(f"   ❌ Invalid API key!")
-                return any(kw in title for kw in keywords) and '香港' in title
+                print(f"   ❌ API error: {result.get('base_resp', {}).get('status_msg', 'Unknown error')}")
+                # Fall back to keyword matching
+                result = any(kw in title for kw in keywords) and '香港' in title
+                print(f"   🔍 Falling back to keyword: {result}")
+                return result
             
             # Try different response formats
             answer = None
@@ -193,6 +201,7 @@ def check_with_minimax(title, source):
                 return any(kw in title for kw in keywords) and '香港' in title
         elif response.status_code == 401 or response.status_code == 403:
             print(f"   ❌ API auth failed (status {response.status_code})")
+            print(f"   🔍 Check MINIMAX_API_KEY and MINIMAX_GROUP_ID")
             return any(kw in title for kw in keywords) and '香港' in title
         else:
             print(f"   ⚠️ API error: {response.status_code}")
