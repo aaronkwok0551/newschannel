@@ -145,7 +145,7 @@ def parse_rss_source(name, url):
                                 'source': name,
                                 'title': entry.title.rsplit(' - ', 1)[0],
                                 'link': entry.link,
-                                'time': dt_obj.strftime('%H:%M'),
+                                
                                 'datetime': dt_obj
                             })
         elif 'wenweipo.com' in url:
@@ -165,7 +165,7 @@ def parse_rss_source(name, url):
                                     'source': '文匯報',
                                     'title': title,
                                     'link': item.get('url', ''),
-                                    'time': dt_obj.strftime('%H:%M'),
+                                    
                                     'datetime': dt_obj
                                 })
                         except:
@@ -185,7 +185,7 @@ def parse_rss_source(name, url):
                                 'source': name,
                                 'title': entry.title.rsplit(' - ', 1)[0],
                                 'link': entry.link,
-                                'time': dt_obj.strftime('%H:%M'),
+                                
                                 'datetime': dt_obj
                             })
     except Exception as e:
@@ -226,21 +226,62 @@ def main():
             seen.add(title_key)
             unique_articles.append(article)
     
-    print(f"\n📊 Total unique articles: {len(unique_articles)}")
+    # Group by source
+    articles_by_source = {}
+    for article in unique_articles:
+        source = article['source']
+        if source not in articles_by_source:
+            articles_by_source[source] = []
+        articles_by_source[source].append(article)
     
-    # Save to file
+    print(f"\n📊 Articles by source: {dict((k, len(v)) for k, v in articles_by_source.items())}")
+    
+    # Save to file in new format
     with open('new_articles.txt', 'w', encoding='utf-8') as f:
-        for article in unique_articles[:15]:
-            f.write(f"• {article['source']} [{article['time']}] {article['title']}\n")
-            f.write(f"  {article['link']}\n\n")
+        f.write("📰 綜合媒體快訊 (彙整)\n\n")
+        for source, articles in articles_by_source.items():
+            # Emoji mapping
+            emoji_map = {
+                '政府新聞': '📰',
+                'HK01': '📰',
+                'on.cc': '📰',
+                'now新聞': '📰',
+                '禁毒/海關': '📰',
+                'RTHK': '📰',
+                '星島': '🐯',
+                '明報': '📝',
+                '文匯報': '📰',
+            }
+            emoji = emoji_map.get(source, '📰')
+            f.write(f"{emoji} {source}\n")
+            for article in articles[:8]:  # Max 8 per source
+                title = article['title'].replace('\n', ' ').strip()
+                f.write(f"• [{title}]({article['link']})\n")
+            f.write("\n")
     
     # Send notification
     if unique_articles:
-        message = f"📰 **香港毒品/海關/保安局新聞監測 (AI篩選)** ({len(unique_articles)}則)\n\n"
-        for article in unique_articles[:5]:
-            message += f"• {article['source']} [{article['time']}] {article['title']}\n"
+        message = "📰 綜合媒體快訊 (彙整)\n\n"
         
-        message += f"\n... 同埋{len(unique_articles)-5}則更多\n"
+        for source, articles in articles_by_source.items():
+            emoji_map = {
+                '政府新聞': '📰',
+                'HK01': '📰',
+                'on.cc': '📰',
+                'now新聞': '📰',
+                '禁毒/海關': '📰',
+                'RTHK': '📰',
+                '星島': '🐯',
+                '明報': '📝',
+                '文匯報': '📰',
+            }
+            emoji = emoji_map.get(source, '📰')
+            message += f"{emoji} {source}\n"
+            for article in articles[:5]:  # Max 5 per source
+                title = article['title'].replace('\n', ' ').strip()
+                message += f"• [{title}]({article['link']})\n"
+            message += "\n"
+        
         message += f"🔗 https://github.com/aaronkwok0551/newschannel"
         
         # Only send if 8am-10pm HKT
