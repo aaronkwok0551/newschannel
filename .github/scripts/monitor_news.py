@@ -130,7 +130,7 @@ def check_with_minimax(title, source):
         return result
     
     try:
-        # Standard REST API format (OpenAI-style from MiniMax docs)
+        # Standard REST API format
         url = "https://api.minimax.io/v1/text/chatcompletion_v2"
         
         headers = {
@@ -142,20 +142,20 @@ def check_with_minimax(title, source):
         if group_id:
             headers["X-GroupId"] = group_id
         
-        # Try M2.1 first (reasoning model)
+        # Ultra-simple prompt
         data = {
-            "model": "MiniMax-M2.1",
-            "max_tokens": 10,
+            "model": "MiniMax-M1",
+            "max_tokens": 3,
             "temperature": 0.1,
             "messages": [
                 {
                     "role": "user",
-                    "content": f"Is this Hong Kong drugs/customs/news? Reply YES or NO. Title: {title}"
+                    "content": f"YES or NO? {title[:50]}"
                 }
             ]
         }
         
-        print(f"   🔄 Calling MiniMax API (M2.1)...")
+        print(f"   🔄 Calling MiniMax (ultra-simple)...")
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         print(f"   📡 Status: {response.status_code}")
@@ -166,32 +166,18 @@ def check_with_minimax(title, source):
             
             # Handle null choices
             if result.get('choices') is None:
-                print(f"   ⚠️ M2.1 returned null, trying M1...")
-                # Try M1 instead
-                data["model"] = "MiniMax-M1"
-                response2 = requests.post(url, headers=headers, json=data, timeout=30)
-                if response2.status_code == 200:
-                    result2 = response2.json()
-                    print(f"   📝 M1 Response: {str(result2)[:200]}")
-                    if 'choices' in result2 and result2['choices']:
-                        answer = result2['choices'][0]['message']['content'].strip().upper()
-                        print(f"   📝 M1 answer: {answer}")
-                        return answer == 'YES'
+                print(f"   ⚠️ Model returned null choices")
                 has_core = any(kw in title for kw in core_keywords)
                 has_hk = any(kw in title for kw in hk_keywords)
                 return has_core and has_hk
             
-            # Parse choices format
             if 'choices' in result and len(result['choices']) > 0:
                 answer = result['choices'][0]['message']['content'].strip().upper()
                 print(f"   📝 AI answer: {answer}")
                 return answer == 'YES'
         
-        elif response.status_code in [401, 403]:
-            print(f"   ❌ Auth failed: {response.text[:200]}")
-        
-        # If all attempts fail, use keyword fallback
-        print(f"   ⚠️ All AI attempts failed, using keyword fallback")
+        # Keyword fallback
+        print(f"   ⚠️ Using keyword fallback")
         has_core = any(kw in title for kw in core_keywords)
         has_hk = any(kw in title for kw in hk_keywords)
         return has_core and has_hk
