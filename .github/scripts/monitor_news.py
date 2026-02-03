@@ -130,8 +130,10 @@ def check_with_minimax(title, source):
         return result
     
     try:
-        # Try different endpoints for coding plan
+        # Try different endpoints (new MiniMax API format)
         endpoints = [
+            "https://api.minimaxi.com/v1/text/chatcompletion_v2",
+            "https://api.minimaxi.com/v1/text/chatcompletion_v2?GroupId=" + group_id if group_id else None,
             "https://api.minimax.chat/v1/text/chatcompletion_v2",
             "https://api.minimax.chat/v1/text/chatcompletion_v2?GroupId=" + group_id if group_id else None,
         ]
