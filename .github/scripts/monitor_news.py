@@ -142,7 +142,7 @@ def check_with_minimax(title, source):
         if group_id:
             headers["X-GroupId"] = group_id
         
-        # Anthropic-compatible format (same as OpenClaw)
+        # Anthropic-compatible format
         data = {
             "model": "MiniMax-M2.1",
             "max_tokens": 10,
@@ -160,23 +160,46 @@ def check_with_minimax(title, source):
             ]
         }
         
-        print(f"   🔄 Calling MiniMax (OpenClaw format)...")
+        print(f"   🔄 Calling MiniMax...")
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         print(f"   📡 Status: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
-            print(f"   📝 Response: {str(result)[:200]}")
             
-            # Look for YES/NO in response
-            text = str(result).upper()
-            if 'YES' in text and 'NO' not in text[:100]:
+            # Save full response for debugging
+            try:
+                with open('minimax_response.json', 'w', encoding='utf-8') as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+                print(f"   💾 Response saved to minimax_response.json")
+            except:
+                pass
+            
+            # Extract text from content blocks (proper extraction)
+            assistant_text = ""
+            blocks = result.get("content", []) or []
+            for block in blocks:
+                if isinstance(block, dict):
+                    # Try different field names
+                    if block.get("type") == "text" and "text" in block:
+                        assistant_text += block["text"]
+                    elif "content" in block:
+                        content_val = block["content"]
+                        if isinstance(content_val, str):
+                            assistant_text += content_val
+            
+            assistant_text = assistant_text.strip()
+            print(f"   📝 Extracted text: {assistant_text[:100]}")
+            
+            if assistant_text.upper() == "YES":
                 print(f"   📝 AI answer: YES")
                 return True
-            elif 'NO' in text:
+            elif assistant_text.upper() == "NO":
                 print(f"   📝 AI answer: NO")
                 return False
+            else:
+                print(f"   ⚠️ Could not parse AI response")
         
         # Keyword fallback
         print(f"   ⚠️ Using keyword fallback")
