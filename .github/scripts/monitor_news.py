@@ -102,8 +102,17 @@ def check_with_minimax(title, source):
     # Regions to EXCLUDE
     exclude_regions = ['日本', '台灣', '珠海', '澳門', '澳洲', '中國', '內地', '大陸', '深圳', '廣州', '北京', '上海', '泰國', '馬來西亞', '新加坡', '韓國', '英國', '美國', '加拿大']
     
-    # Very strict fallback keywords (must be HK-related)
-    keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私', '檢獲', '截獲', '香港', '港島', '九龍', '新界']
+    # Strict keyword fallback (must be directly related to drugs/customs/security bureau)
+    # Must include at least ONE of these core keywords:
+    # - Drug-related: 毒品, 緝毒, 太空油, 依託咪酯, 禁毒, 販毒, 吸毒
+    # - Customs-related: 海關, 走私, 檢獲, 截獲
+    # - Security Bureau related: 保安局, 鄧炳強
+    
+    # All news MUST include at least one of these core keywords
+    core_keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私', '檢獲', '截獲', '販毒', '吸毒']
+    
+    # Must also include HK indicator
+    hk_keywords = ['香港', '港島', '九龍', '新界', '本港', '香港海關', '香港警方']
     
     # First check: exclude non-HK regions
     for region in exclude_regions:
@@ -113,8 +122,11 @@ def check_with_minimax(title, source):
     
     if not api_key:
         print(f"   ⚠️ MINIMAX_API_KEY not set!")
-        result = any(kw in title for kw in keywords) and '香港' in title
-        print(f"   🔍 Keyword check (no AI): {result}")
+        # Strict keyword fallback
+        has_core = any(kw in title for kw in core_keywords)
+        has_hk = any(kw in title for kw in hk_keywords)
+        result = has_core and has_hk
+        print(f"   🔍 Core keyword: {has_core}, HK keyword: {has_hk} → {result}")
         return result
     
     try:
@@ -171,9 +183,11 @@ def check_with_minimax(title, source):
             # Check for API key error
             if result.get('base_resp', {}).get('status_code') == 2049:
                 print(f"   ❌ API error: {result.get('base_resp', {}).get('status_msg', 'Unknown error')}")
-                # Fall back to keyword matching
-                result = any(kw in title for kw in keywords) and '香港' in title
-                print(f"   🔍 Falling back to keyword: {result}")
+                # Fall back to strict keyword matching
+                has_core = any(kw in title for kw in core_keywords)
+                has_hk = any(kw in title for kw in hk_keywords)
+                result = has_core and has_hk
+                print(f"   🔍 Core keyword: {has_core}, HK keyword: {has_hk} → {result}")
                 return result
             
             # Try different response formats
@@ -197,19 +211,33 @@ def check_with_minimax(title, source):
                 print(f"   📝 AI answer: {answer}")
                 return answer == 'YES'
             else:
-                print(f"   ⚠️ No answer found in response")
-                return any(kw in title for kw in keywords) and '香港' in title
+                print(f"   ⚠️ No answer found in response, using strict keyword fallback")
+                # Must have at least ONE core keyword AND one HK keyword
+                has_core = any(kw in title for kw in core_keywords)
+                has_hk = any(kw in title for kw in hk_keywords)
+                result = has_core and has_hk
+                print(f"   🔍 Core keyword: {has_core}, HK keyword: {has_hk} → {result}")
+                return result
         elif response.status_code == 401 or response.status_code == 403:
             print(f"   ❌ API auth failed (status {response.status_code})")
             print(f"   🔍 Check MINIMAX_API_KEY and MINIMAX_GROUP_ID")
-            return any(kw in title for kw in keywords) and '香港' in title
+            # Strict keyword fallback
+            has_core = any(kw in title for kw in core_keywords)
+            has_hk = any(kw in title for kw in hk_keywords)
+            return has_core and has_hk
         else:
             print(f"   ⚠️ API error: {response.status_code}")
-            return any(kw in title for kw in keywords) and '香港' in title
+            # Strict keyword fallback
+            has_core = any(kw in title for kw in core_keywords)
+            has_hk = any(kw in title for kw in hk_keywords)
+            return has_core and has_hk
         
     except Exception as e:
         print(f"   ❌ AI check failed: {e}")
-        return any(kw in title for kw in keywords) and '香港' in title
+        # Strict keyword fallback
+        has_core = any(kw in title for kw in core_keywords)
+        has_hk = any(kw in title for kw in hk_keywords)
+        return has_core and has_hk
 
     return any(kw in title for kw in keywords)
 
