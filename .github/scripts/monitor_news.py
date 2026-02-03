@@ -208,13 +208,13 @@ def check_with_minimax(title, source, asked_articles):
         
         data = {
             "model": "MiniMax-M2.1",
-            "max_tokens": 50,
+            "max_tokens": 500,
             "temperature": 0.1,
             "messages": [{
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": f"Is this Hong Kong drugs/customs news? Reply YES or NO only."
+                    "text": f"Is this Hong Kong drugs/customs news? Reply YES or NO only. One word answer."
                 }]
             }]
         }
