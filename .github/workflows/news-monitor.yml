@@ -24,12 +24,13 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install requests feedparser
+          pip install requests feedparser openai
       
       - name: Run News Monitor
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
         run: python .github/scripts/monitor_news.py
       
       - name: Check for new articles
@@ -72,7 +73,7 @@ jobs:
           python-version: '3.9'
       
       - name: Install dependencies
-        run: pip install requests feedparser
+        run: pip install requests feedparser openai
       
       - name: Run Test
         run: python .github/scripts/monitor_news.py --test
