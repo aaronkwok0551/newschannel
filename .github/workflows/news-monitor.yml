@@ -1,0 +1,78 @@
+name: HK News Monitor
+
+on:
+  schedule:
+    # Every 15 minutes from 8am-10pm on weekdays (Hong Kong time UTC+8)
+    # Cron format: minute hour * * 1-5
+    - cron: '*/15 0-2,8-14 * * 1-5'
+  workflow_dispatch:
+    # Allow manual trigger
+
+jobs:
+  monitor_news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests feedparser
+      
+      - name: Run News Monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python .github/scripts/monitor_news.py
+      
+      - name: Check for new articles
+        id: check_new
+        run: |
+          if [ -f "new_articles.txt" ] && [ -s "new_articles.txt" ]; then
+            echo "has_new=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_new=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Send Telegram Notification
+        if: steps.check_new.outputs.has_new == 'true'
+        uses: appleboy/telegram-action@v1.0.3
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message: |
+            📰 **香港即時新聞監測**
+            
+            以下係今日最新相關新聞：
+            
+            $(cat new_articles.txt | head -20)
+            
+            ---
+            🕐 監測時間: $(date '+%Y-%m-%d %H:%M:%S')
+        continue-on-error: true
+
+  # Also run on push for manual testing
+  test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: pip install requests feedparser
+      
+      - name: Run Test
+        run: python .github/scripts/monitor_news.py --test
