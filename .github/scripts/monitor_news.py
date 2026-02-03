@@ -130,26 +130,36 @@ def check_with_minimax(title, source):
         return result
     
     try:
-        url = "https://api.minimax.chat/v1/text/chatcompletion_v2"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
+        # Try different endpoints for coding plan
+        endpoints = [
+            "https://api.minimax.chat/v1/text/chatcompletion_v2",
+            "https://api.minimax.chat/v1/text/chatcompletion_v2?GroupId=" + group_id if group_id else None,
+        ]
         
-        # Add Group ID header if provided (for some plans)
-        if group_id:
-            headers["X-GroupId"] = group_id
-        
-        data = {
-            "model": "MiniMax-M2.1",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "你係一個嚴格既香港新聞編輯。過濾標準：\n1. 只接受「香港」本地既毒品、海關、保安局新聞\n2. 一旦標題出現「日本、台灣、珠海、澳門、澳洲、中國、內地、大陸、深圳、廣州」呢啲地區，全部都係NO\n3. 香港地產、娛樂、政治其他地方新聞都係NO\n4. 香港海關/警察/緝毒既新聞先YES"
-                },
-                {
-                    "role": "user",
-                    "content": f"""嚴格判斷呢條標題係咪「香港本地既毒品/海關/保安局」新聞：
+        for url in [e for e in endpoints if e]:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            # Try with or without Group ID header
+            for use_group_header in [False, True]:
+                test_headers = headers.copy()
+                if use_group_header and group_id:
+                    test_headers["X-GroupId"] = group_id
+                
+                # Try different models
+                for model in ["MiniMax-M2.1", "abab6.5s-chat"]:
+                    data = {
+                        "model": model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": "你係一個嚴格既香港新聞編輯。過濾標準：\n1. 只接受「香港」本地既毒品、海關、保安局新聞\n2. 一旦標題出現「日本、台灣、珠海、澳門、澳洲、中國、內地、大陸、深圳、廣州」呢啲地區，全部都係NO\n3. 香港地產、娛樂、政治其他地方新聞都係NO\n4. 香港海關/警察/緝毒既新聞先YES"
+                            },
+                            {
+                                "role": "user",
+                                "content": f"""嚴格判斷呢條標題係咪「香港本地既毒品/海關/保安局」新聞：
 
 標題: {title}
 來源: {source}
@@ -166,71 +176,38 @@ def check_with_minimax(title, source):
 - 香港保安局/禁毒處/警察緝毒新聞
 
 請只回答「YES」或「NO」"""
-                }
-            ],
-            "max_tokens": 10,
-            "temperature": 0.1
-        }
+                            }
+                        ],
+                        "max_tokens": 10,
+                        "temperature": 0.1
+                    }
+                    
+                    print(f"   🔄 Trying {url}, model={model}, group_header={use_group_header}...")
+                    response = requests.post(url, headers=test_headers, json=data, timeout=30)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        
+                        # Check for success
+                        if result.get('base_resp', {}).get('status_code') == 2049:
+                            print(f"   ❌ Still invalid api key")
+                            continue
+                        
+                        # Look for answer
+                        if 'choices' in result and len(result['choices']) > 0:
+                            answer = result['choices'][0]['message']['content'].strip().upper()
+                            print(f"   📝 AI answer: {answer}")
+                            return answer == 'YES'
+                        elif 'text' in result:
+                            answer = result['text'].strip().upper()
+                            print(f"   📝 AI answer: {answer}")
+                            return answer == 'YES'
         
-        print(f"   🔄 Calling MiniMax API...")
-        response = requests.post(url, headers=headers, json=data, timeout=30)
-        
-        print(f"   📡 API response status: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            
-            # Check for API key error
-            if result.get('base_resp', {}).get('status_code') == 2049:
-                print(f"   ❌ API error: {result.get('base_resp', {}).get('status_msg', 'Unknown error')}")
-                # Fall back to strict keyword matching
-                has_core = any(kw in title for kw in core_keywords)
-                has_hk = any(kw in title for kw in hk_keywords)
-                result = has_core and has_hk
-                print(f"   🔍 Core keyword: {has_core}, HK keyword: {has_hk} → {result}")
-                return result
-            
-            # Try different response formats
-            answer = None
-            
-            # Format 1: OpenAI-style (choices)
-            if 'choices' in result and len(result['choices']) > 0:
-                answer = result['choices'][0]['message']['content'].strip().upper()
-            
-            # Format 2: MiniMax direct
-            elif 'text' in result:
-                answer = result['text'].strip().upper()
-            
-            # Format 3: Look for answer in base_resp
-            elif 'base_resp' in result:
-                text_content = result.get('base_resp', {}).get('text_content', '')
-                if text_content:
-                    answer = text_content.strip().upper()
-            
-            if answer:
-                print(f"   📝 AI answer: {answer}")
-                return answer == 'YES'
-            else:
-                print(f"   ⚠️ No answer found in response, using strict keyword fallback")
-                # Must have at least ONE core keyword AND one HK keyword
-                has_core = any(kw in title for kw in core_keywords)
-                has_hk = any(kw in title for kw in hk_keywords)
-                result = has_core and has_hk
-                print(f"   🔍 Core keyword: {has_core}, HK keyword: {has_hk} → {result}")
-                return result
-        elif response.status_code == 401 or response.status_code == 403:
-            print(f"   ❌ API auth failed (status {response.status_code})")
-            print(f"   🔍 Check MINIMAX_API_KEY and MINIMAX_GROUP_ID")
-            # Strict keyword fallback
-            has_core = any(kw in title for kw in core_keywords)
-            has_hk = any(kw in title for kw in hk_keywords)
-            return has_core and has_hk
-        else:
-            print(f"   ⚠️ API error: {response.status_code}")
-            # Strict keyword fallback
-            has_core = any(kw in title for kw in core_keywords)
-            has_hk = any(kw in title for kw in hk_keywords)
-            return has_core and has_hk
+        # If all attempts fail, use keyword fallback
+        print(f"   ⚠️ All AI attempts failed, using keyword fallback")
+        has_core = any(kw in title for kw in core_keywords)
+        has_hk = any(kw in title for kw in hk_keywords)
+        return has_core and has_hk
         
     except Exception as e:
         print(f"   ❌ AI check failed: {e}")
@@ -239,7 +216,6 @@ def check_with_minimax(title, source):
         has_hk = any(kw in title for kw in hk_keywords)
         return has_core and has_hk
 
-    return any(kw in title for kw in keywords)
 
 def parse_rss_source(name, url, sent_articles):
     """Parse RSS/JSON source and return matching articles"""
