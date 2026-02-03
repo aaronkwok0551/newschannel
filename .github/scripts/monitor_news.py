@@ -130,64 +130,57 @@ def check_with_minimax(title, source):
         return result
     
     try:
-        # Try Anthropic-style API format (new MiniMax API)
-        base_urls = [
-            "https://api.minimax.io/anthropic/v1/messages",
-            "https://api.minimaxi.com/anthropic/v1/messages",
-            "https://api.minimax.io/anthropic",
-            "https://api.minimaxi.com/anthropic",
-        ]
+        # Anthropic-style API format (from MiniMax docs)
+        url = "https://api.minimax.io/anthropic/v1/messages"
         
-        for url in base_urls:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            # Try with or without Group ID
-            for use_group_header in [False, True]:
-                test_headers = headers.copy()
-                if use_group_header and group_id:
-                    test_headers["X-GroupId"] = group_id
-                
-                # Anthropic-style format
-                data = {
-                    "model": "MiniMax-M2.1",
-                    "max_tokens": 10,
-                    "temperature": 0.1,
-                    "system": "你係一個嚴格既香港新聞編輯。過濾標準：\n1. 只接受「香港」本地既毒品、海關、保安局新聞\n2. 一旦標題出現「日本、台灣、珠海、澳門、澳洲、中國、內地、大陸、深圳、廣州」呢啲地區，全部都係NO\n3. 香港地產、娛樂、政治其他地方新聞都係NO\n4. 香港海關/警察/緝毒既新聞先YES",
-                    "messages": [
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Try with Group ID header
+        if group_id:
+            headers["X-GroupId"] = group_id
+        
+        # Exact Anthropic format from docs
+        data = {
+            "model": "MiniMax-M2.1",
+            "max_tokens": 10,
+            "temperature": 0.1,
+            "system": "你係一個嚴格既香港新聞編輯。過濾標準：\n1. 只接受「香港」本地既毒品、海關、保安局新聞\n2. 一旦標題出現「日本、台灣、珠海、澳門、澳洲、中國、內地、大陸、深圳、廣州」呢啲地區，全部都係NO\n3. 香港地產、娛樂、政治其他地方新聞都係NO\n4. 香港海關/警察/緝毒既新聞先YES",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
                         {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": f"嚴格判斷呢條標題係咪「香港本地既毒品/海關/保安局」新聞：\n\n標題: {title}\n來源: {source}\n\n❌ 如果標題有以下情況，必須答NO：\n- 提到日本、台灣、珠海、澳門、澳洲、中國、內地、大陸等非香港地區\n- 純粹香港地產/樓盤\n- 香港娛樂圈/TVB\n- 一般香港社會新聞（唔關毒品/海關/保安局）\n\n✅ 只有呢啲先YES：\n- 香港本地毒品相關新聞\n- 香港海關緝毒/走私新聞\n- 香港保安局/禁毒處/警察緝毒新聞\n\n請只回答「YES」或「NO」"
-                                }
-                            ]
+                            "type": "text",
+                            "text": f"嚴格判斷呢條標題係咪「香港本地既毒品/海關/保安局」新聞：\n\n標題: {title}\n來源: {source}\n\n❌ 如果標題有以下情況，必須答NO：\n- 提到日本、台灣、珠海、澳門、澳洲、中國、內地、大陸等非香港地區\n- 純粹香港地產/樓盤\n- 香港娛樂圈/TVB\n- 一般香港社會新聞（唔關毒品/海關/保安局）\n\n✅ 只有呢啲先YES：\n- 香港本地毒品相關新聞\n- 香港海關緝毒/走私新聞\n- 香港保安局/禁毒處/警察緝毒新聞\n\n請只回答「YES」或「NO」"
                         }
                     ]
                 }
-                
-                print(f"   🔄 Trying {url}, group_header={use_group_header}...")
-                response = requests.post(url, headers=test_headers, json=data, timeout=30)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    print(f"   📝 Response: {str(result)[:200]}")
-                    
-                    # Look for YES/NO in response
-                    text = str(result).upper()
-                    if 'YES' in text and 'NO' not in text[:50]:
-                        print(f"   📝 AI answer: YES")
-                        return True
-                    elif 'NO' in text:
-                        print(f"   📝 AI answer: NO")
-                        return False
-                
-                elif response.status_code in [401, 403]:
-                    print(f"   ❌ Auth failed (status {response.status_code})")
-                    continue
+            ]
+        }
+        
+        print(f"   🔄 Calling MiniMax Anthropic API...")
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        
+        print(f"   📡 Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            print(f"   📝 Response: {str(result)[:300]}")
+            
+            # Look for YES/NO in response
+            text = str(result).upper()
+            if '"YES"' in text or ('YES' in text and 'NO' not in text[:100]):
+                print(f"   📝 AI answer: YES")
+                return True
+            elif '"NO"' in text or 'NO' in text[:100]:
+                print(f"   📝 AI answer: NO")
+                return False
+        
+        elif response.status_code in [401, 403]:
+            print(f"   ❌ Auth failed: {response.text[:200]}")
         
         # If all attempts fail, use keyword fallback
         print(f"   ⚠️ All AI attempts failed, using keyword fallback")
