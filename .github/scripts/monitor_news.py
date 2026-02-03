@@ -24,7 +24,6 @@ RSS_SOURCES = {
     'HK01': 'https://news.hk01.com/rss/focus/2135',
     'on.cc': 'https://news.on.cc/hk/import/rdf/news.rdf',
     'now新聞': 'https://news.now.com/home/rss.xml',
-    '禁毒/海關': 'https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+海關+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant',
     'RTHK': 'https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml',
     '星島': 'https://www.stheadline.com/rss',
     '明報': 'https://news.mingpao.com/rss/ins/all.xml',
@@ -62,8 +61,17 @@ def check_with_minimax(title, source):
     """Use MiniMax AI to check if news is relevant"""
     api_key = os.environ.get('MINIMAX_API_KEY', '')
     
-    # Very strict fallback keywords
-    keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私', '檢獲', '截獲', '太空油', '依托咪酯', 'K仔', '可卡因', '大麻', '海洛英', '冰毒', '氯胺酮']
+    # Regions to EXCLUDE
+    exclude_regions = ['日本', '台灣', '珠海', '澳門', '澳洲', '中國', '內地', '大陸', '深圳', '廣州', '北京', '上海', '泰國', '馬來西亞', '新加坡', '韓國', '英國', '美國', '加拿大']
+    
+    # Very strict fallback keywords (must be HK-related)
+    keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私', '檢獲', '截獲', '香港', '港島', '九龍', '新界']
+    
+    # First check: exclude non-HK regions
+    for region in exclude_regions:
+        if region in title:
+            print(f"   🚫 Excluded (non-HK region: {region})")
+            return False
     
     if not api_key:
         print(f"   ⚠️ MINIMAX_API_KEY not set!")
@@ -83,24 +91,25 @@ def check_with_minimax(title, source):
             "messages": [
                 {
                     "role": "system",
-                    "content": "你係一個專業既新聞編輯，專門過濾香港毒品、海關、保安局相關既新聞。只有當新聞標題同呢三個主題直接相關時，先可以回答YES。香港地產、娛樂、政治其他地方既新聞唔好答YES。"
+                    "content": "你係一個嚴格既香港新聞編輯。過濾標準：\n1. 只接受「香港」本地既毒品、海關、保安局新聞\n2. 一旦標題出現「日本、台灣、珠海、澳門、澳洲、中國、內地、大陸、深圳、廣州」呢啲地區，全部都係NO\n3. 香港地產、娛樂、政治其他地方新聞都係NO\n4. 香港海關/警察/緝毒既新聞先YES"
                 },
                 {
                     "role": "user",
-                    "content": f"""請嚴格判斷以下新聞標題係咪「真係」同「香港毒品」、「香港海關」或「香港保安局」相關。
+                    "content": f"""嚴格判斷呢條標題係咪「香港本地既毒品/海關/保安局」新聞：
 
-新聞來源: {source}
 標題: {title}
+來源: {source}
 
-香港毒品相關：毒品、緝毒、禁毒、太空油、依託咪酯、K仔、可卡因、大麻、海洛英、冰毒
-香港海關相關：走私、截獲、檢獲、毒品走私、海關緝毒
-香港保安局相關：鄧炳強、保安局、禁毒處
+❌ 如果標題有以下情況，必須答NO：
+- 提到日本、台灣、珠海、澳門、澳洲、中國、內地、大陸等非香港地區
+- 純粹香港地產/樓盤
+- 香港娛樂圈/TVB
+- 一般香港社會新聞（唔關毒品/海關/保安局）
 
-❌ 唔好YES既情況：
-- 香港地產/樓盤
-- 娛樂圈/TVB
-- 中國/台灣/其他地方既新聞
-- 一般社會新聞
+✅ 只有呢啲先YES：
+- 香港本地毒品相關新聞
+- 香港海關緝毒/走私新聞
+- 香港保安局/禁毒處/警察緝毒新聞
 
 請只回答「YES」或「NO」"""
                 }
@@ -122,17 +131,17 @@ def check_with_minimax(title, source):
                 return answer == 'YES'
             else:
                 print(f"   ⚠️ No choices in response")
-                return any(kw in title for kw in keywords)
+                return any(kw in title for kw in keywords) and '香港' in title
         elif response.status_code == 401 or response.status_code == 403:
             print(f"   ❌ API auth failed (status {response.status_code})")
-            return any(kw in title for kw in keywords)
+            return any(kw in title for kw in keywords) and '香港' in title
         else:
             print(f"   ⚠️ API error: {response.status_code}")
-            return any(kw in title for kw in keywords)
+            return any(kw in title for kw in keywords) and '香港' in title
         
     except Exception as e:
         print(f"   ❌ AI check failed: {e}")
-        return any(kw in title for kw in keywords)
+        return any(kw in title for kw in keywords) and '香港' in title
 
     return any(kw in title for kw in keywords)
 
