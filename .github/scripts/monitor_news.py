@@ -21,8 +21,7 @@ HK_TZ = pytz.timezone('Asia/Hong_Kong')
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 
 # Robust text extraction function
-THINK_RE = re.compile(r"<think>.*?
-</think>", re.DOTALL)
+THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 def strip_think(s):
     """Remove thinking blocks from text"""
