@@ -75,8 +75,7 @@ def check_with_minimax(title, source):
     
     if not api_key:
         print(f"   ⚠️ MINIMAX_API_KEY not set!")
-        # Only use keyword fallback if API key is missing
-        result = any(kw in title for kw in keywords)
+        result = any(kw in title for kw in keywords) and '香港' in title
         print(f"   🔍 Keyword check (no AI): {result}")
         return result
     
@@ -122,15 +121,33 @@ def check_with_minimax(title, source):
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         print(f"   📡 API response status: {response.status_code}")
+        print(f"   📝 Raw response (first 300 chars): {response.text[:300]}")
         
         if response.status_code == 200:
             result = response.json()
+            
+            # Try different response formats
+            answer = None
+            
+            # Format 1: OpenAI-style (choices)
             if 'choices' in result and len(result['choices']) > 0:
                 answer = result['choices'][0]['message']['content'].strip().upper()
+            
+            # Format 2: MiniMax direct
+            elif 'text' in result:
+                answer = result['text'].strip().upper()
+            
+            # Format 3: Look for answer in base_resp
+            elif 'base_resp' in result:
+                text_content = result.get('base_resp', {}).get('text_content', '')
+                if text_content:
+                    answer = text_content.strip().upper()
+            
+            if answer:
                 print(f"   📝 AI answer: {answer}")
                 return answer == 'YES'
             else:
-                print(f"   ⚠️ No choices in response")
+                print(f"   ⚠️ No answer found in response")
                 return any(kw in title for kw in keywords) and '香港' in title
         elif response.status_code == 401 or response.status_code == 403:
             print(f"   ❌ API auth failed (status {response.status_code})")
