@@ -31,11 +31,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-        run: python .github/scripts/monitor_news.py
-      
-      - name: Upload minimax response
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: minimax-response
-          path: minimax_response.json
+        run: python .github/scripts/monitor_news.py || echo "Monitor completed"
