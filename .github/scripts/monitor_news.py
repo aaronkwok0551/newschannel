@@ -163,6 +163,11 @@ def check_with_minimax(title, source):
         if response.status_code == 200:
             result = response.json()
             
+            # Check for API key error
+            if result.get('base_resp', {}).get('status_code') == 2049:
+                print(f"   ❌ Invalid API key!")
+                return any(kw in title for kw in keywords) and '香港' in title
+            
             # Try different response formats
             answer = None
             
@@ -370,18 +375,6 @@ def main():
                     sent_articles.add(article['link'])
                 save_sent_articles(sent_articles)
                 print(f"\n✅ Sent {len(unique_articles)} new articles, updated tracking file")
-                
-                # Commit tracking file for persistence across runs
-                try:
-                    import subprocess
-                    subprocess.run(['git', 'add', SENT_ARTICLES_FILE], check=True)
-                    subprocess.run(['git', 'config', 'user.name', 'Patrick AI'], check=True)
-                    subprocess.run(['git', 'config', 'user.email', 'patrick@openclaw.ai'], check=True)
-                    subprocess.run(['git', 'commit', '-m', 'Update sent articles tracking'], check=True)
-                    subprocess.run(['git', 'push'], check=True)
-                    print(f"   📁 Tracking file committed to repo")
-                except Exception as e:
-                    print(f"   ⚠️ Could not commit tracking file: {e}")
             else:
                 print(f"\n⚠️ Telegram send failed")
         else:
