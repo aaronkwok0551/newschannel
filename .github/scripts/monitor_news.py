@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 HK News Monitor - Uses MiniMax AI to determine relevant news
+Deduplication and daily filtering enabled
 """
 
 import requests
@@ -14,6 +15,9 @@ import time
 
 # Hong Kong Timezone
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
+
+# File to track sent articles
+SENT_ARTICLES_FILE = 'sent_articles.txt'
 
 # RSS Sources to monitor
 RSS_SOURCES = {
@@ -28,6 +32,39 @@ RSS_SOURCES = {
     '星島': 'https://www.stheadline.com/rss',
     '明報': 'https://news.mingpao.com/rss/ins/all.xml',
 }
+
+def load_sent_articles():
+    """Load previously sent article URLs"""
+    sent = set()
+    try:
+        if os.path.exists(SENT_ARTICLES_FILE):
+            with open(SENT_ARTICLES_FILE, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('http'):
+                        sent.add(line)
+    except Exception as e:
+        print(f"   ⚠️ Error loading sent articles: {e}")
+    return sent
+
+def save_sent_articles(sent_urls):
+    """Save sent article URLs to file"""
+    try:
+        with open(SENT_ARTICLES_FILE, 'w', encoding='utf-8') as f:
+            for url in sorted(sent_urls):
+                f.write(f"{url}\n")
+    except Exception as e:
+        print(f"   ⚠️ Error saving sent articles: {e}")
+
+def is_today(dt_obj):
+    """Check if datetime is today in HKT"""
+    now = datetime.datetime.now(HK_TZ)
+    return dt_obj.date() == now.date()
+
+def is_recent(dt_obj, hours=24):
+    """Check if datetime is within specified hours"""
+    now = datetime.datetime.now(HK_TZ)
+    return (now - dt_obj).total_seconds() < (hours * 3600)
 
 def send_telegram(message):
     """Send message to Telegram"""
@@ -162,7 +199,7 @@ def check_with_minimax(title, source):
 
     return any(kw in title for kw in keywords)
 
-def parse_rss_source(name, url):
+def parse_rss_source(name, url, sent_articles):
     """Parse RSS/JSON source and return matching articles"""
     articles = []
     now = datetime.datetime.now(HK_TZ)
@@ -171,18 +208,25 @@ def parse_rss_source(name, url):
         if 'news.google.com' in url:
             feed = feedparser.parse(url)
             for entry in feed.entries[:30]:
+                link = entry.link
+                
+                # Skip if already sent
+                if link in sent_articles:
+                    print(f"   ⏭️ Already sent, skipping: {entry.title[:40]}...")
+                    continue
+                
                 if check_with_minimax(entry.title, name):
                     time_struct = getattr(entry, 'published_parsed', None)
                     if time_struct:
                         dt_obj = datetime.datetime.fromtimestamp(
                             time.mktime(time_struct), HK_TZ
                         )
-                        if (now - dt_obj).total_seconds() < 86400:
+                        # Only today's news
+                        if is_today(dt_obj):
                             articles.append({
                                 'source': name,
                                 'title': entry.title.rsplit(' - ', 1)[0],
-                                'link': entry.link,
-                                
+                                'link': link,
                                 'datetime': dt_obj
                             })
         elif 'wenweipo.com' in url:
@@ -190,6 +234,13 @@ def parse_rss_source(name, url):
             data = response.json()
             for item in data.get('data', [])[:30]:
                 title = item.get('title', '')
+                link = item.get('url', '')
+                
+                # Skip if already sent
+                if link in sent_articles:
+                    print(f"   ⏭️ Already sent, skipping: {title[:40]}...")
+                    continue
+                
                 if check_with_minimax(title, '文匯報'):
                     pub_date = item.get('publishTime') or item.get('updated')
                     if pub_date:
@@ -197,12 +248,13 @@ def parse_rss_source(name, url):
                             dt_obj = datetime.datetime.strptime(
                                 pub_date, "%Y-%m-%dT%H:%M:%S.%f%z"
                             )
-                            if (now - dt_obj.astimezone(HK_TZ)).total_seconds() < 86400:
+                            dt_obj = dt_obj.astimezone(HK_TZ)
+                            # Only today's news
+                            if is_today(dt_obj):
                                 articles.append({
                                     'source': '文匯報',
                                     'title': title,
-                                    'link': item.get('url', ''),
-                                    
+                                    'link': link,
                                     'datetime': dt_obj
                                 })
                         except:
@@ -211,18 +263,25 @@ def parse_rss_source(name, url):
             response = requests.get(url, timeout=15)
             feed = feedparser.parse(response.content)
             for entry in feed.entries[:30]:
+                link = entry.link
+                
+                # Skip if already sent
+                if link in sent_articles:
+                    print(f"   ⏭️ Already sent, skipping: {entry.title[:40]}...")
+                    continue
+                
                 if check_with_minimax(entry.title, name):
                     time_struct = getattr(entry, 'updated_parsed', None) or getattr(entry, 'published_parsed', None)
                     if time_struct:
                         dt_obj = datetime.datetime.fromtimestamp(
                             time.mktime(time_struct), HK_TZ
                         )
-                        if (now - dt_obj).total_seconds() < 86400:
+                        # Only today's news
+                        if is_today(dt_obj):
                             articles.append({
                                 'source': name,
                                 'title': entry.title.rsplit(' - ', 1)[0],
-                                'link': entry.link,
-                                
+                                'link': link,
                                 'datetime': dt_obj
                             })
     except Exception as e:
@@ -233,6 +292,10 @@ def parse_rss_source(name, url):
 def main():
     print(f"\n🕐 [{datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}] Starting AI news monitor...")
     print(f"📡 Monitoring {len(RSS_SOURCES)} sources")
+    
+    # Load already sent articles
+    sent_articles = load_sent_articles()
+    print(f"📋 Loaded {len(sent_articles)} previously sent articles")
     
     # Check API key
     api_key = os.environ.get('MINIMAX_API_KEY', '')
@@ -247,14 +310,14 @@ def main():
     
     for name, url in RSS_SOURCES.items():
         print(f"📥 Fetching {name}...")
-        articles = parse_rss_source(name, url)
+        articles = parse_rss_source(name, url, sent_articles)
         all_articles.extend(articles)
-        print(f"   → Found {len(articles)} AI-matched articles")
+        print(f"   → Found {len(articles)} new articles")
     
     # Sort by time
     all_articles.sort(key=lambda x: x['datetime'], reverse=True)
     
-    # Remove duplicates
+    # Remove duplicates (by title within this run)
     seen = set()
     unique_articles = []
     for article in all_articles:
@@ -271,32 +334,9 @@ def main():
             articles_by_source[source] = []
         articles_by_source[source].append(article)
     
-    print(f"\n📊 Articles by source: {dict((k, len(v)) for k, v in articles_by_source.items())}")
+    print(f"\n📊 New articles by source: {dict((k, len(v)) for k, v in articles_by_source.items())}")
     
-    # Save to file in new format
-    with open('new_articles.txt', 'w', encoding='utf-8') as f:
-        f.write("📰 綜合媒體快訊 (彙整)\n\n")
-        for source, articles in articles_by_source.items():
-            # Emoji mapping
-            emoji_map = {
-                '政府新聞': '📰',
-                'HK01': '📰',
-                'on.cc': '📰',
-                'now新聞': '📰',
-                '禁毒/海關': '📰',
-                'RTHK': '📰',
-                '星島': '🐯',
-                '明報': '📝',
-                '文匯報': '📰',
-            }
-            emoji = emoji_map.get(source, '📰')
-            f.write(f"{emoji} {source}\n")
-            for article in articles[:8]:  # Max 8 per source
-                title = article['title'].replace('\n', ' ').strip()
-                f.write(f"• [{title}]({article['link']})\n")
-            f.write("\n")
-    
-    # Send notification
+    # Send notification if there are new articles
     if unique_articles:
         message = "📰 綜合媒體快訊 (彙整)\n\n"
         
@@ -321,15 +361,25 @@ def main():
         
         message += f"🔗 https://github.com/aaronkwok0551/newschannel"
         
-        # Only send if 8am-10pm HKT
+        # Only send if within monitoring hours (8am-7pm)
         now_hkt = datetime.datetime.now(HK_TZ)
-        if 8 <= now_hkt.hour <= 22:
-            send_telegram(message)
-            print(f"\n✅ Notification sent for {len(unique_articles)} articles")
+        if 8 <= now_hkt.hour <= 19:
+            if send_telegram(message):
+                # Mark these articles as sent
+                for article in unique_articles:
+                    sent_articles.add(article['link'])
+                save_sent_articles(sent_articles)
+                print(f"\n✅ Sent {len(unique_articles)} new articles, updated tracking file")
+            else:
+                print(f"\n⚠️ Telegram send failed")
         else:
-            print(f"\n⏰ Outside monitoring hours, notification skipped")
+            print(f"\n⏰ Outside monitoring hours (8am-7pm), notification skipped")
+            # Still update tracking to avoid duplicate notifications next time
+            for article in unique_articles:
+                sent_articles.add(article['link'])
+            save_sent_articles(sent_articles)
     else:
-        print("\n📭 No matching articles found")
+        print("\n📭 No new articles found today")
     
     print(f"\n✅ Monitor complete at {datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}")
 
