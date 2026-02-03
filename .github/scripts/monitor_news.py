@@ -56,9 +56,12 @@ def send_telegram(message):
 def check_with_minimax(title, source):
     """Use MiniMax AI to check if news is relevant"""
     api_key = os.environ.get('MINIMAX_API_KEY', '')
+    
+    # Fallback keywords
+    keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私', '檢獲', '截獲']
+    
     if not api_key:
-        # Fallback to keyword
-        keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私']
+        print(f"   ⚠️ MINIMAX_API_KEY not set, using keyword fallback")
         return any(kw in title for kw in keywords)
     
     try:
@@ -89,23 +92,32 @@ def check_with_minimax(title, source):
             "temperature": 0.1
         }
         
+        print(f"   🔄 Calling MiniMax API...")
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
-        if response.ok:
+        print(f"   📡 API response status: {response.status_code}")
+        
+        if response.status_code == 200:
             result = response.json()
             if 'choices' in result and len(result['choices']) > 0:
                 answer = result['choices'][0]['message']['content'].strip().upper()
+                print(f"   📝 AI answer: {answer}")
                 return answer == 'YES'
-        
-        # Fallback to keyword if API fails
-        keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私']
-        return any(kw in title for kw in keywords)
+            else:
+                print(f"   ⚠️ No choices in response: {result}")
+        elif response.status_code == 401 or response.status_code == 403:
+            print(f"   ❌ API auth failed (status {response.status_code}), using keyword fallback")
+            print(f"   💡 Check your MINIMAX_API_KEY format")
+            return any(kw in title for kw in keywords)
+        else:
+            print(f"   ⚠️ API error: {response.text[:200]}")
+            return any(kw in title for kw in keywords)
         
     except Exception as e:
-        print(f"⚠️ AI check failed: {e}")
-        # Fallback to keyword
-        keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私']
+        print(f"   ❌ AI check failed: {e}")
         return any(kw in title for kw in keywords)
+
+    return any(kw in title for kw in keywords)
 
 def parse_rss_source(name, url):
     """Parse RSS/JSON source and return matching articles"""
@@ -178,7 +190,15 @@ def parse_rss_source(name, url):
 def main():
     print(f"\n🕐 [{datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}] Starting AI news monitor...")
     print(f"📡 Monitoring {len(RSS_SOURCES)} sources")
-    print(f"🤖 Using MiniMax AI for relevance filtering\n")
+    
+    # Check API key
+    api_key = os.environ.get('MINIMAX_API_KEY', '')
+    if api_key:
+        print(f"🤖 MiniMax API key: {api_key[:10]}...")
+    else:
+        print("⚠️ MINIMAX_API_KEY not set, using keyword fallback")
+    
+    print()
     
     all_articles = []
     
