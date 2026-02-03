@@ -180,18 +180,88 @@ def resolve_google_url(url):
     except: return url
 
 def fetch_full_article(url, summary_fallback=""):
+    """
+    優化版：支援更多網站結構的content extraction
+    """
     try:
         session = requests.Session()
-        r = session.get(url, timeout=20, headers=HEADERS)
-        r.encoding = r.apparent_encoding 
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-TW,zh-HK,zh-CN,en-US,en',
+        })
+        r = session.get(url, timeout=20)
+        r.encoding = r.apparent_encoding
         soup = BeautifulSoup(r.text, 'html.parser')
-        for tag in soup(['script', 'style', 'header', 'footer', 'nav', 'aside', 'iframe']): tag.decompose()
-        content_area = soup.find('div', class_=re.compile(r'content|article|body|news-text|post-body', re.I))
-        paragraphs = content_area.find_all('p') if content_area else soup.find_all('p')
-        clean_text = [p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 10]
-        return "\n\n".join(clean_text) if clean_text else summary_fallback, None
-    except Exception:
+        
+        # 移除noise elements
+        noise_selectors = ['script', 'style', 'header', 'footer', 'nav', 'aside', 'iframe',
+            '[class*="ad"]', '[class*="advertisement"]', '[class*="ads"]',
+            '[class*="comment"]', '[class*="sidebar"]', '.nav', '.header', '.footer',
+            '.social-share', '.share-buttons', '.related-posts']
+        for selector in noise_selectors:
+            for tag in soup.select(selector): tag.decompose()
+        
+        # Content selectors (23個pattern)
+        content_selectors = [r'article', r'[role="main"]', r'main',
+            r'[class*="content"]', r'[class*="article"]', r'[class*="news-text"]',
+            r'[class*="post-body"]', r'[class*="story-body"]', r'[id*="content"]',
+            r'[id*="article"]', r'[id*="news"]', '.post-content', '.article-content',
+            '.news-content', '.entry-content', '.td-post-content', '.story-body',
+            '#article', '#content', '#main', '#news-content', '.blog-post', '.single-post']
+        
+        content_area = None
+        for selector in content_selectors:
+            try:
+                if selector.startswith('r'):
+                    pattern = selector[1:]
+                    content_area = soup.find('div', class_=re.compile(pattern, re.I)) or soup.find('article')
+                else:
+                    content_area = soup.select_one(selector)
+                if content_area: break
+            except: continue
+        
+        # Fallback: largest text block
+        if not content_area:
+            paragraphs = soup.find_all('p')
+            if paragraphs:
+                parent_counts = {}
+                for p in paragraphs[:20]:
+                    parent = p.find_parent(['div', 'article', 'section', 'main'])
+                    if parent:
+                        parent_html = str(parent)
+                        parent_counts[parent_html] = parent_counts.get(parent_html, 0) + 1
+                if parent_counts:
+                    best_parent_html = max(parent_counts, key=parent_counts.get)
+                    content_area = BeautifulSoup(best_parent_html, 'html.parser')
+        
+        # Extract paragraphs
+        if content_area:
+            for ad in content_area.find_all(['aside', 'div']):
+                ad_classes = ad.get('class', [])
+                if any(x in ad_classes for x in ['ad', 'ads', 'advertisement', 'comment', 'share']):
+                    ad.decompose()
+            paragraphs = content_area.find_all('p')
+        else:
+            paragraphs = soup.find_all('p')
+        
+        # Clean text
+        clean_text = []
+        skip_patterns = ['廣告', '廣告贊助', '分享此文', '分享到', '讚好此文章', '按讚', '訂閱', 'advertisement', 'sponsored']
+        
+        for p in paragraphs:
+            text = p.get_text().strip()
+            if len(text) < 30: continue
+            if any(pattern in text.lower() for pattern in skip_patterns): continue
+            clean_text.append(text)
+        
+        if clean_text:
+            return '\n\n'.join(clean_text[:30]), None
         return summary_fallback, None
+        
+    except Exception as e:
+        return summary_fallback, None
+
 
 def is_new_news(timestamp):
     if not timestamp: return False
@@ -399,3 +469,4 @@ for row in rows:
                             badge = '<span class="new-badge">NEW!</span>' if is_new else ''
                             title_style = 'class="read-text"' if is_selected else ""
                             st.markdown(f'<div class="news-item-row">{badge}<a href="{link}" target="_blank" {title_style}>{html.escape(item["title"])}</a><div class="news-time">{item["time_str"]}</div></div>', unsafe_allow_html=True)
+
