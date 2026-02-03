@@ -63,12 +63,15 @@ def check_with_minimax(title, source):
     """Use MiniMax AI to check if news is relevant"""
     api_key = os.environ.get('MINIMAX_API_KEY', '')
     
-    # Fallback keywords
-    keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私', '檢獲', '截獲']
+    # Very strict fallback keywords
+    keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私', '檢獲', '截獲', '太空油', '依托咪酯', 'K仔', '可卡因', '大麻', '海洛英', '冰毒', '氯胺酮']
     
     if not api_key:
-        print(f"   ⚠️ MINIMAX_API_KEY not set, using keyword fallback")
-        return any(kw in title for kw in keywords)
+        print(f"   ⚠️ MINIMAX_API_KEY not set!")
+        # Only use keyword fallback if API key is missing
+        result = any(kw in title for kw in keywords)
+        print(f"   🔍 Keyword check (no AI): {result}")
+        return result
     
     try:
         url = "https://api.minimax.chat/v1/text/chatcompletion_v2"
@@ -80,16 +83,25 @@ def check_with_minimax(title, source):
             "model": "MiniMax-M2.1",
             "messages": [
                 {
+                    "role": "system",
+                    "content": "你係一個專業既新聞編輯，專門過濾香港毒品、海關、保安局相關既新聞。只有當新聞標題同呢三個主題直接相關時，先可以回答YES。香港地產、娛樂、政治其他地方既新聞唔好答YES。"
+                },
+                {
                     "role": "user",
-                    "content": f"""請判斷以下香港新聞標題係咪同「香港毒品」、「香港海關」或「香港保安局」相關。
+                    "content": f"""請嚴格判斷以下新聞標題係咪「真係」同「香港毒品」、「香港海關」或「香港保安局」相關。
 
 新聞來源: {source}
 標題: {title}
 
-相關 topics:
-- 香港毒品相關 (毒品、緝毒、禁毒、太空油、依託咪酯)
-- 香港海關相關 (走私、截獲、檢獲)
-- 香港保安局相關 (鄧炳強、保安局政策)
+香港毒品相關：毒品、緝毒、禁毒、太空油、依託咪酯、K仔、可卡因、大麻、海洛英、冰毒
+香港海關相關：走私、截獲、檢獲、毒品走私、海關緝毒
+香港保安局相關：鄧炳強、保安局、禁毒處
+
+❌ 唔好YES既情況：
+- 香港地產/樓盤
+- 娛樂圈/TVB
+- 中國/台灣/其他地方既新聞
+- 一般社會新聞
 
 請只回答「YES」或「NO」"""
                 }
@@ -110,13 +122,13 @@ def check_with_minimax(title, source):
                 print(f"   📝 AI answer: {answer}")
                 return answer == 'YES'
             else:
-                print(f"   ⚠️ No choices in response: {result}")
+                print(f"   ⚠️ No choices in response")
+                return any(kw in title for kw in keywords)
         elif response.status_code == 401 or response.status_code == 403:
-            print(f"   ❌ API auth failed (status {response.status_code}), using keyword fallback")
-            print(f"   💡 Check your MINIMAX_API_KEY format")
+            print(f"   ❌ API auth failed (status {response.status_code})")
             return any(kw in title for kw in keywords)
         else:
-            print(f"   ⚠️ API error: {response.text[:200]}")
+            print(f"   ⚠️ API error: {response.status_code}")
             return any(kw in title for kw in keywords)
         
     except Exception as e:
