@@ -235,7 +235,6 @@ def fetch_full_article(url, summary_fallback=""):
                     best_parent_html = max(parent_counts, key=parent_counts.get)
                     content_area = BeautifulSoup(best_parent_html, 'html.parser')
         
-        # Extract paragraphs
         if content_area:
             for ad in content_area.find_all(['aside', 'div']):
                 ad_classes = ad.get('class', [])
@@ -245,7 +244,6 @@ def fetch_full_article(url, summary_fallback=""):
         else:
             paragraphs = soup.find_all('p')
         
-        # Clean text
         clean_text = []
         skip_patterns = ['廣告', '廣告贊助', '分享此文', '分享到', '讚好此文章', '按讚', '訂閱', 'advertisement', 'sponsored']
         
@@ -261,6 +259,7 @@ def fetch_full_article(url, summary_fallback=""):
         
     except Exception as e:
         return summary_fallback, None
+
 
 
 def is_new_news(timestamp):
@@ -469,4 +468,5 @@ for row in rows:
                             badge = '<span class="new-badge">NEW!</span>' if is_new else ''
                             title_style = 'class="read-text"' if is_selected else ""
                             st.markdown(f'<div class="news-item-row">{badge}<a href="{link}" target="_blank" {title_style}>{html.escape(item["title"])}</a><div class="news-time">{item["time_str"]}</div></div>', unsafe_allow_html=True)
+
 
