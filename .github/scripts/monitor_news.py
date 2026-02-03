@@ -370,6 +370,18 @@ def main():
                     sent_articles.add(article['link'])
                 save_sent_articles(sent_articles)
                 print(f"\n✅ Sent {len(unique_articles)} new articles, updated tracking file")
+                
+                # Commit tracking file for persistence across runs
+                try:
+                    import subprocess
+                    subprocess.run(['git', 'add', SENT_ARTICLES_FILE], check=True)
+                    subprocess.run(['git', 'config', 'user.name', 'Patrick AI'], check=True)
+                    subprocess.run(['git', 'config', 'user.email', 'patrick@openclaw.ai'], check=True)
+                    subprocess.run(['git', 'commit', '-m', 'Update sent articles tracking'], check=True)
+                    subprocess.run(['git', 'push'], check=True)
+                    print(f"   📁 Tracking file committed to repo")
+                except Exception as e:
+                    print(f"   ⚠️ Could not commit tracking file: {e}")
             else:
                 print(f"\n⚠️ Telegram send failed")
         else:
