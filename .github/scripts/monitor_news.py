@@ -22,6 +22,8 @@ RSS_SOURCES = {
     
     # News Sources with AI filtering
     'HK01': 'https://news.hk01.com/rss/focus/2135',
+    'on.cc': 'https://news.on.cc/hk/import/rdf/news.rdf',
+    'now新聞': 'https://news.now.com/home/rss.xml',
     '禁毒/海關': 'https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+海關+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant',
     'RTHK': 'https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml',
     '星島': 'https://www.stheadline.com/rss',
