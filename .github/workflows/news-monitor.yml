@@ -23,14 +23,12 @@ jobs:
           python-version: '3.9'
       
       - name: Install dependencies
-        run: |
-          pip install requests feedparser openai
+        run: pip install requests feedparser
       
       - name: Run News Monitor
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
         run: python .github/scripts/monitor_news.py
       
       - name: Check for new articles
@@ -58,22 +56,3 @@ jobs:
             ---
             🕐 監測時間: $(date '+%Y-%m-%d %H:%M:%S')
         continue-on-error: true
-
-  # Also run on push for manual testing
-  test:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-      
-      - name: Install dependencies
-        run: pip install requests feedparser openai
-      
-      - name: Run Test
-        run: python .github/scripts/monitor_news.py --test

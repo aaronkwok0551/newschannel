@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HK News Monitor - Uses AI to determine relevant news articles
+HK News Monitor - Keyword-based filtering for relevant news
 """
 
 import requests
 import feedparser
 import datetime
 import pytz
-import re
 import os
-import sys
-import json
 
 # Hong Kong Timezone
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
+
+# Keywords to search for (simplified)
+KEYWORDS = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私', '檢獲', '截獲']
 
 # RSS Sources to monitor
 RSS_SOURCES = {
@@ -54,41 +54,12 @@ def send_telegram(message):
         print(f"❌ Telegram error: {e}")
     return False
 
-def check_with_ai(title, source):
-    """Use AI to determine if news is related to drugs, customs, or security bureau"""
-    try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=os.environ.get('MINIMAX_API_KEY', ''),
-            base_url="https://api.minimax.chat/v1"
-        )
-        
-        prompt = f"""請判斷以下香港新聞標題係咪同「香港毒品」、「香港海關」或「香港保安局」相關：
-
-新聞來源: {source}
-標題: {title}
-
-相關 topics:
-- 香港毒品相關 (毒品、緝毒、禁毒、太空油、依託咪酯)
-- 香港海關相關 (走私、截獲、檢獲)
-- 香港保安局相關 (鄧炳強、保安局政策)
-
-請只回答「YES」或「NO」"""
-
-        response = client.chat.completions.create(
-            model="MiniMax-M2.1",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=10,
-            temperature=0.1
-        )
-        
-        result = response.choices[0].message.content.strip().upper()
-        return result == 'YES'
-        
-    except Exception as e:
-        # Fallback to keyword if AI fails
-        keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私']
-        return any(kw in title for kw in keywords)
+def check_keyword(title):
+    """Check if title contains any keyword"""
+    for keyword in KEYWORDS:
+        if keyword in title:
+            return True
+    return False
 
 def parse_rss_source(name, url):
     """Parse RSS/JSON source and return matching articles"""
@@ -97,10 +68,9 @@ def parse_rss_source(name, url):
     
     try:
         if 'news.google.com' in url:
-            # Google News RSS
             feed = feedparser.parse(url)
-            for entry in feed.entries[:30]:  # Limit to 30 entries
-                if check_with_ai(entry.title, name):
+            for entry in feed.entries[:30]:
+                if check_keyword(entry.title):
                     time_struct = getattr(entry, 'published_parsed', None)
                     if time_struct:
                         dt_obj = datetime.datetime.fromtimestamp(
@@ -115,12 +85,11 @@ def parse_rss_source(name, url):
                                 'datetime': dt_obj
                             })
         elif 'wenweipo.com' in url:
-            # Wenweipo JSON
             response = requests.get(url, timeout=15)
             data = response.json()
             for item in data.get('data', [])[:30]:
                 title = item.get('title', '')
-                if check_with_ai(title, '文匯報'):
+                if check_keyword(title):
                     pub_date = item.get('publishTime') or item.get('updated')
                     if pub_date:
                         try:
@@ -138,11 +107,10 @@ def parse_rss_source(name, url):
                         except:
                             pass
         else:
-            # Regular RSS
             response = requests.get(url, timeout=15)
             feed = feedparser.parse(response.content)
             for entry in feed.entries[:30]:
-                if check_with_ai(entry.title, name):
+                if check_keyword(entry.title):
                     time_struct = getattr(entry, 'updated_parsed', None) or getattr(entry, 'published_parsed', None)
                     if time_struct:
                         dt_obj = datetime.datetime.fromtimestamp(
@@ -162,8 +130,9 @@ def parse_rss_source(name, url):
     return articles
 
 def main():
-    print(f"\n🕐 [{datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}] Starting AI news monitor...")
-    print(f"📡 Monitoring {len(RSS_SOURCES)} sources with AI filtering...\n")
+    print(f"\n🕐 [{datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}] Starting news monitor...")
+    print(f"📡 Monitoring {len(RSS_SOURCES)} sources")
+    print(f"🔍 Keywords: {', '.join(KEYWORDS[:5])}...\n")
     
     all_articles = []
     
@@ -171,12 +140,12 @@ def main():
         print(f"📥 Fetching {name}...")
         articles = parse_rss_source(name, url)
         all_articles.extend(articles)
-        print(f"   → Found {len(articles)} AI-matched articles")
+        print(f"   → Found {len(articles)} matching articles")
     
     # Sort by time
     all_articles.sort(key=lambda x: x['datetime'], reverse=True)
     
-    # Remove duplicates based on title
+    # Remove duplicates
     seen = set()
     unique_articles = []
     for article in all_articles:
@@ -187,7 +156,7 @@ def main():
     
     print(f"\n📊 Total unique articles: {len(unique_articles)}")
     
-    # Save to file for GitHub Actions
+    # Save to file
     with open('new_articles.txt', 'w', encoding='utf-8') as f:
         for article in unique_articles[:15]:
             f.write(f"• {article['source']} [{article['time']}] {article['title']}\n")
