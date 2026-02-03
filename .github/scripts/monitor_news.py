@@ -142,20 +142,20 @@ def check_with_minimax(title, source):
         if group_id:
             headers["X-GroupId"] = group_id
         
-        # Simpler format - MiniMax-M1 (non-reasoning model)
+        # Try M2.1 first (reasoning model)
         data = {
-            "model": "MiniMax-M1",
-            "max_tokens": 5,
+            "model": "MiniMax-M2.1",
+            "max_tokens": 10,
             "temperature": 0.1,
             "messages": [
                 {
                     "role": "user",
-                    "content": f"Is this about Hong Kong drugs/customs news? Reply YES or NO. Title: {title}"
+                    "content": f"Is this Hong Kong drugs/customs/news? Reply YES or NO. Title: {title}"
                 }
             ]
         }
         
-        print(f"   🔄 Calling MiniMax API (M1)...")
+        print(f"   🔄 Calling MiniMax API (M2.1)...")
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         print(f"   📡 Status: {response.status_code}")
@@ -166,7 +166,17 @@ def check_with_minimax(title, source):
             
             # Handle null choices
             if result.get('choices') is None:
-                print(f"   ⚠️ choices is null - model returned no response")
+                print(f"   ⚠️ M2.1 returned null, trying M1...")
+                # Try M1 instead
+                data["model"] = "MiniMax-M1"
+                response2 = requests.post(url, headers=headers, json=data, timeout=30)
+                if response2.status_code == 200:
+                    result2 = response2.json()
+                    print(f"   📝 M1 Response: {str(result2)[:200]}")
+                    if 'choices' in result2 and result2['choices']:
+                        answer = result2['choices'][0]['message']['content'].strip().upper()
+                        print(f"   📝 M1 answer: {answer}")
+                        return answer == 'YES'
                 has_core = any(kw in title for kw in core_keywords)
                 has_hk = any(kw in title for kw in hk_keywords)
                 return has_core and has_hk
