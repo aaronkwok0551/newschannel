@@ -12,12 +12,48 @@ import pytz
 import os
 import json
 import time
+import re
 
 # Hong Kong Timezone
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
 
 # File to track sent articles
 SENT_ARTICLES_FILE = 'sent_articles.txt'
+
+# Robust text extraction function
+THINK_RE = re.compile(r"<think>.*?
+</think>", re.DOTALL)
+
+def strip_think(s):
+    """Remove thinking blocks from text"""
+    if not s:
+        return ""
+    return THINK_RE.sub("", s).strip()
+
+def collect_text(obj, out):
+    """Recursively collect text from JSON-like object"""
+    if isinstance(obj, str):
+        t = strip_think(obj)
+        if t:
+            out.append(t)
+    elif isinstance(obj, list):
+        for it in obj:
+            collect_text(it, out)
+    elif isinstance(obj, dict):
+        # Common keys first
+        for k in ("text", "content", "message", "output_text"):
+            if k in obj:
+                collect_text(obj[k], out)
+        # Then scan all values
+        for v in obj.values():
+            collect_text(v, out)
+
+def extract_text_from_response(resp):
+    """Extract final text from MiniMax response"""
+    texts = []
+    collect_text(resp, texts)
+    return texts[0] if texts else ""
+
 
 # RSS Sources to monitor
 RSS_SOURCES = {
@@ -176,50 +212,8 @@ def check_with_minimax(title, source):
             except:
                 pass
             
-            # Robust text extraction - try multiple methods
-            assistant_text = ""
-            
-            # Method 1: Try content array
-            blocks = result.get("content", [])
-            if isinstance(blocks, list):
-                for block in blocks:
-                    if isinstance(block, dict):
-                        # text block
-                        if block.get("type") == "text" and "text" in block:
-                            assistant_text += block["text"]
-                        # content field
-                        elif "content" in block:
-                            c = block["content"]
-                            if isinstance(c, str):
-                                assistant_text += c
-            
-            # Method 2: Try message.content (OpenAI style)
-            if not assistant_text:
-                msg = result.get("message", {})
-                if isinstance(msg, dict):
-                    msg_content = msg.get("content", "")
-                    if isinstance(msg_content, str):
-                        assistant_text = msg_content
-            
-            # Method 3: Try choices
-            if not assistant_text:
-                choices = result.get("choices", [])
-                if choices and isinstance(choices, list):
-                    msg = choices[0].get("message", {})
-                    if isinstance(msg, dict):
-                        msg_content = msg.get("content", "")
-                        if isinstance(msg_content, str):
-                            assistant_text = msg_content
-            
-            # Method 4: Direct search for YES/NO in entire response
-            if not assistant_text:
-                resp_str = str(result)
-                if '"YES"' in resp_str or resp_str.endswith('"YES"') or resp_str.endswith('"YES"'):
-                    assistant_text = "YES"
-                elif '"NO"' in resp_str or resp_str.endswith('"NO"') or resp_str.endswith('"NO"'):
-                    assistant_text = "NO"
-            
-            assistant_text = assistant_text.strip()
+            # Robust text extraction using recursive collector
+            assistant_text = extract_text_from_response(result)
             print(f"   📝 Extracted: {assistant_text[:100]}")
             
             if assistant_text.upper() == "YES":
