@@ -130,8 +130,8 @@ def check_with_minimax(title, source):
         return result
     
     try:
-        # Standard REST API format
-        url = "https://api.minimax.io/v1/text/chatcompletion_v2"
+        # Use OpenClaw's exact format (Anthropic-compatible)
+        url = "https://api.minimax.io/anthropic/v1/messages"
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -142,20 +142,25 @@ def check_with_minimax(title, source):
         if group_id:
             headers["X-GroupId"] = group_id
         
-        # Ultra-simple prompt
+        # Anthropic-compatible format (same as OpenClaw)
         data = {
-            "model": "MiniMax-M1",
-            "max_tokens": 3,
+            "model": "MiniMax-M2.1",
+            "max_tokens": 10,
             "temperature": 0.1,
             "messages": [
                 {
                     "role": "user",
-                    "content": f"YES or NO? {title[:50]}"
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Is this Hong Kong drugs/customs news? YES or NO. Title: {title}"
+                        }
+                    ]
                 }
             ]
         }
         
-        print(f"   🔄 Calling MiniMax (ultra-simple)...")
+        print(f"   🔄 Calling MiniMax (OpenClaw format)...")
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         print(f"   📡 Status: {response.status_code}")
@@ -164,17 +169,14 @@ def check_with_minimax(title, source):
             result = response.json()
             print(f"   📝 Response: {str(result)[:200]}")
             
-            # Handle null choices
-            if result.get('choices') is None:
-                print(f"   ⚠️ Model returned null choices")
-                has_core = any(kw in title for kw in core_keywords)
-                has_hk = any(kw in title for kw in hk_keywords)
-                return has_core and has_hk
-            
-            if 'choices' in result and len(result['choices']) > 0:
-                answer = result['choices'][0]['message']['content'].strip().upper()
-                print(f"   📝 AI answer: {answer}")
-                return answer == 'YES'
+            # Look for YES/NO in response
+            text = str(result).upper()
+            if 'YES' in text and 'NO' not in text[:100]:
+                print(f"   📝 AI answer: YES")
+                return True
+            elif 'NO' in text:
+                print(f"   📝 AI answer: NO")
+                return False
         
         # Keyword fallback
         print(f"   ⚠️ Using keyword fallback")
