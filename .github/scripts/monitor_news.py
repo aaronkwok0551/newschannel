@@ -19,10 +19,9 @@ HK_TZ = pytz.timezone('Asia/Hong_Kong')
 RSS_SOURCES = {
     # Government RSS
     '政府新聞': 'https://www.info.gov.hk/gia/rss/general_zh.xml',
-    '警務處': 'https://www.police.gov.hk/ppp_en/09_disclaimer/rss/news_en.xml',
-    '海關': 'https://www.customs.gov.hk/rss/en/news_whatsnew.xml',
     
     # News Sources with AI filtering
+    'HK01': 'https://news.hk01.com/rss/focus/2135',
     '禁毒/海關': 'https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+海關+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant',
     'RTHK': 'https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml',
     '星島': 'https://www.stheadline.com/rss',
