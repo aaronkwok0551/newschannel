@@ -261,69 +261,6 @@ def fetch_full_article(url, summary_fallback=""):
         return summary_fallback, None
 
 
-def summarize_with_ai(articles_text):
-    """用MiniMax API綜合多條新聞"""
-    try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=st.secrets.get("MINIMAX_API_KEY", "sk-cp-P9ZBga8GlZWhLCT4ffhD4VxZkpRbHgKIVLXA8ZJsKDqSuVoAI66yaKtsQsIEhxIu9BUZ28N4qJp_NEaDdjMSMOD0D_-2pq2z_Ii3X1Bb7-g9NR24Mpi8ooE"),
-            base_url="https://api.minimax.chat/v1"
-        )
-        
-        prompt = f"""請將以下香港新聞整理成呢個格式：
-
-媒體名稱: 標題 [發佈日期及時間]
-正文內容
-連結
-Ends
-
-規則：
-1. 每條新聞用以上格式輸出
-2. 媒體名稱: 標題 (用冒號分隔)
-3. 發佈日期時間格式：【DD/MM H:MM】
-4. 正文不要修改新聞內容，不要做任何修飾，不要photo caption
-5. 連結直接放正文下面，有一個空行
-6. 每條新聞以 "Ends" 結束
-7. 多條新聞用空行分隔
-
-新聞內容：
-{articles_text}
-"""
-
-        response = client.chat.completions.create(
-            model="MiniMax-M2.1",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=3000,
-            temperature=0.3
-        )
-        
-        return response.choices[0].message.content
-        
-    except Exception as e:
-        return f"AI綜合失敗: {str(e)}"
-
-def get_ai_summary_for_selected(selected_links, news_data_map):
-    """為selected既新聞生成AI綜合"""
-    all_flat = [n for items in news_data_map.values() for n in items]
-    targets = [n for n in all_flat if n['link'] in selected_links]
-    targets.sort(key=lambda x: x['timestamp'], reverse=True)
-    
-    if not targets:
-        return None, "請先選擇新聞"
-    
-    with st.spinner("正在fetch新聞內容..."):
-        articles = []
-        for item in targets:
-            content, _ = fetch_full_article(item['link'], summary_fallback=item['title'])
-            articles.append(f"【{item['source']}】 {item['title']} [{item['time_str']}]\n{content[:2000]}")
-        
-        combined_text = "\n\n---\n\n".join(articles)
-    
-    with st.spinner("正在AI綜合分析..."):
-        summary = summarize_with_ai(combined_text)
-    
-    return summary, None
-
 
 def is_new_news(timestamp):
     if not timestamp: return False
@@ -453,7 +390,6 @@ def get_all_news_data_parallel(limit=300):
 
 if 'selected_links' not in st.session_state: st.session_state.selected_links = set()
 if 'show_preview' not in st.session_state: st.session_state.show_preview = False
-if 'show_ai_summary' not in st.session_state: st.session_state.show_ai_summary = False
 
 with st.sidebar:
     st.header("⚙️ 控制台")
@@ -462,12 +398,6 @@ with st.sidebar:
         st.rerun()
     st.divider()
     st.metric("已勾選新聞", f"{len(st.session_state.selected_links)} 篇")
-    if st.button("🤖 AI綜合摘要", type="primary", use_container_width=True):
-        if not st.session_state.selected_links:
-            st.warning("請先勾選新聞！")
-        else:
-            st.session_state.show_ai_summary = True
-            st.rerun()
     if st.button("📄 生成 TXT 文本", type="primary", use_container_width=True):
         if not st.session_state.selected_links:
             st.warning("請先勾選新聞！")
@@ -499,30 +429,6 @@ def show_txt_preview():
 
 if st.session_state.show_preview:
     show_txt_preview()
-
-
-@st.dialog("🤖 AI綜合摘要")
-def show_ai_summary():
-    summary, error = get_ai_summary_for_selected(
-        st.session_state.selected_links, 
-        news_data_map
-    )
-    
-    if error:
-        st.error(error)
-    else:
-        st.markdown("### 📊 新聞綜合摘要")
-        st.markdown(summary)
-        st.divider()
-        st.caption(f"綜合了 {len(st.session_state.selected_links)} 條新聞")
-        
-    if st.button("關閉"):
-        st.session_state.show_ai_summary = False
-        st.rerun()
-
-if st.session_state.get('show_ai_summary'):
-    show_ai_summary()
-
 
 st.title("Tommy Sir 後援會之新聞監察系統")
 rows = chunked(source_configs, 4)
@@ -562,3 +468,5 @@ for row in rows:
                             badge = '<span class="new-badge">NEW!</span>' if is_new else ''
                             title_style = 'class="read-text"' if is_selected else ""
                             st.markdown(f'<div class="news-item-row">{badge}<a href="{link}" target="_blank" {title_style}>{html.escape(item["title"])}</a><div class="news-time">{item["time_str"]}</div></div>', unsafe_allow_html=True)
+
+
