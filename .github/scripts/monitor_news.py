@@ -142,31 +142,34 @@ def check_with_minimax(title, source):
         if group_id:
             headers["X-GroupId"] = group_id
         
-        # Standard format from docs
+        # Simpler format - MiniMax-M1 (non-reasoning model)
         data = {
-            "model": "MiniMax-M2.1",
-            "max_tokens": 10,
+            "model": "MiniMax-M1",
+            "max_tokens": 5,
             "temperature": 0.1,
             "messages": [
                 {
-                    "role": "system",
-                    "content": "你係一個嚴格既香港新聞編輯。過濾標準：\n1. 只接受「香港」本地既毒品、海關、保安局新聞\n2. 一旦標題出現「日本、台灣、珠海、澳門、澳洲、中國、內地、大陸、深圳、廣州」呢啲地區，全部都係NO\n3. 香港地產、娛樂、政治其他地方新聞都係NO\n4. 香港海關/警察/緝毒既新聞先YES"
-                },
-                {
                     "role": "user",
-                    "content": f"嚴格判斷呢條標題係咪「香港本地既毒品/海關/保安局」新聞：\n\n標題: {title}\n來源: {source}\n\n❌ 如果標題有以下情況，必須答NO：\n- 提到日本、台灣、珠海、澳門、澳洲、中國、內地、大陸等非香港地區\n- 純粹香港地產/樓盤\n- 香港娛樂圈/TVB\n- 一般香港社會新聞（唔關毒品/海關/保安局）\n\n✅ 只有呢啲先YES：\n- 香港本地毒品相關新聞\n- 香港海關緝毒/走私新聞\n- 香港保安局/禁毒處/警察緝毒新聞\n\n請只回答「YES」或「NO」"
+                    "content": f"Is this about Hong Kong drugs/customs news? Reply YES or NO. Title: {title}"
                 }
             ]
         }
         
-        print(f"   🔄 Calling MiniMax REST API...")
+        print(f"   🔄 Calling MiniMax API (M1)...")
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         print(f"   📡 Status: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
-            print(f"   📝 Response: {str(result)[:300]}")
+            print(f"   📝 Response: {str(result)[:200]}")
+            
+            # Handle null choices
+            if result.get('choices') is None:
+                print(f"   ⚠️ choices is null - model returned no response")
+                has_core = any(kw in title for kw in core_keywords)
+                has_hk = any(kw in title for kw in hk_keywords)
+                return has_core and has_hk
             
             # Parse choices format
             if 'choices' in result and len(result['choices']) > 0:
