@@ -130,80 +130,64 @@ def check_with_minimax(title, source):
         return result
     
     try:
-        # Try different endpoints (new MiniMax API format)
-        endpoints = [
-            "https://api.minimaxi.com/v1/text/chatcompletion_v2",
-            "https://api.minimaxi.com/v1/text/chatcompletion_v2?GroupId=" + group_id if group_id else None,
-            "https://api.minimax.chat/v1/text/chatcompletion_v2",
-            "https://api.minimax.chat/v1/text/chatcompletion_v2?GroupId=" + group_id if group_id else None,
+        # Try Anthropic-style API format (new MiniMax API)
+        base_urls = [
+            "https://api.minimax.io/anthropic/v1/messages",
+            "https://api.minimaxi.com/anthropic/v1/messages",
+            "https://api.minimax.io/anthropic",
+            "https://api.minimaxi.com/anthropic",
         ]
         
-        for url in [e for e in endpoints if e]:
+        for url in base_urls:
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
             
-            # Try with or without Group ID header
+            # Try with or without Group ID
             for use_group_header in [False, True]:
                 test_headers = headers.copy()
                 if use_group_header and group_id:
                     test_headers["X-GroupId"] = group_id
                 
-                # Try different models
-                for model in ["MiniMax-M2.1", "abab6.5s-chat"]:
-                    data = {
-                        "model": model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": "你係一個嚴格既香港新聞編輯。過濾標準：\n1. 只接受「香港」本地既毒品、海關、保安局新聞\n2. 一旦標題出現「日本、台灣、珠海、澳門、澳洲、中國、內地、大陸、深圳、廣州」呢啲地區，全部都係NO\n3. 香港地產、娛樂、政治其他地方新聞都係NO\n4. 香港海關/警察/緝毒既新聞先YES"
-                            },
-                            {
-                                "role": "user",
-                                "content": f"""嚴格判斷呢條標題係咪「香港本地既毒品/海關/保安局」新聞：
-
-標題: {title}
-來源: {source}
-
-❌ 如果標題有以下情況，必須答NO：
-- 提到日本、台灣、珠海、澳門、澳洲、中國、內地、大陸等非香港地區
-- 純粹香港地產/樓盤
-- 香港娛樂圈/TVB
-- 一般香港社會新聞（唔關毒品/海關/保安局）
-
-✅ 只有呢啲先YES：
-- 香港本地毒品相關新聞
-- 香港海關緝毒/走私新聞
-- 香港保安局/禁毒處/警察緝毒新聞
-
-請只回答「YES」或「NO」"""
-                            }
-                        ],
-                        "max_tokens": 10,
-                        "temperature": 0.1
-                    }
+                # Anthropic-style format
+                data = {
+                    "model": "MiniMax-M2.1",
+                    "max_tokens": 10,
+                    "temperature": 0.1,
+                    "system": "你係一個嚴格既香港新聞編輯。過濾標準：\n1. 只接受「香港」本地既毒品、海關、保安局新聞\n2. 一旦標題出現「日本、台灣、珠海、澳門、澳洲、中國、內地、大陸、深圳、廣州」呢啲地區，全部都係NO\n3. 香港地產、娛樂、政治其他地方新聞都係NO\n4. 香港海關/警察/緝毒既新聞先YES",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": f"嚴格判斷呢條標題係咪「香港本地既毒品/海關/保安局」新聞：\n\n標題: {title}\n來源: {source}\n\n❌ 如果標題有以下情況，必須答NO：\n- 提到日本、台灣、珠海、澳門、澳洲、中國、內地、大陸等非香港地區\n- 純粹香港地產/樓盤\n- 香港娛樂圈/TVB\n- 一般香港社會新聞（唔關毒品/海關/保安局）\n\n✅ 只有呢啲先YES：\n- 香港本地毒品相關新聞\n- 香港海關緝毒/走私新聞\n- 香港保安局/禁毒處/警察緝毒新聞\n\n請只回答「YES」或「NO」"
+                                }
+                            ]
+                        }
+                    ]
+                }
+                
+                print(f"   🔄 Trying {url}, group_header={use_group_header}...")
+                response = requests.post(url, headers=test_headers, json=data, timeout=30)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    print(f"   📝 Response: {str(result)[:200]}")
                     
-                    print(f"   🔄 Trying {url}, model={model}, group_header={use_group_header}...")
-                    response = requests.post(url, headers=test_headers, json=data, timeout=30)
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        
-                        # Check for success
-                        if result.get('base_resp', {}).get('status_code') == 2049:
-                            print(f"   ❌ Still invalid api key")
-                            continue
-                        
-                        # Look for answer
-                        if 'choices' in result and len(result['choices']) > 0:
-                            answer = result['choices'][0]['message']['content'].strip().upper()
-                            print(f"   📝 AI answer: {answer}")
-                            return answer == 'YES'
-                        elif 'text' in result:
-                            answer = result['text'].strip().upper()
-                            print(f"   📝 AI answer: {answer}")
-                            return answer == 'YES'
+                    # Look for YES/NO in response
+                    text = str(result).upper()
+                    if 'YES' in text and 'NO' not in text[:50]:
+                        print(f"   📝 AI answer: YES")
+                        return True
+                    elif 'NO' in text:
+                        print(f"   📝 AI answer: NO")
+                        return False
+                
+                elif response.status_code in [401, 403]:
+                    print(f"   ❌ Auth failed (status {response.status_code})")
+                    continue
         
         # If all attempts fail, use keyword fallback
         print(f"   ⚠️ All AI attempts failed, using keyword fallback")
