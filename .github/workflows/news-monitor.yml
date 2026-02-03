@@ -23,7 +23,7 @@ jobs:
           python-version: '3.9'
       
       - name: Install dependencies
-        run: pip install requests feedparser
+        run: pip install requests feedparser pytz
       
       - name: Run News Monitor
         env:
@@ -43,17 +43,17 @@ jobs:
       
       - name: Send Telegram Notification
         if: steps.check_new.outputs.has_new == 'true'
-        uses: appleboy/telegram-action@v1.0.3
+        uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           message: |
             📰 **香港即時新聞監測**
-            
+
             以下係今日最新相關新聞：
-            
+
             $(cat new_articles.txt | head -20)
-            
+
             ---
             🕐 監測時間: $(date '+%Y-%m-%d %H:%M:%S')
         continue-on-error: true
