@@ -28,7 +28,6 @@ RSS_SOURCES = {
     'RTHK': 'https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml',
     '星島': 'https://www.stheadline.com/rss',
     '明報': 'https://news.mingpao.com/rss/ins/all.xml',
-    '文匯報': 'https://www.wenweipo.com/channels/wenweipo/hotlist/hours/24/stories.json',
 }
 
 def send_telegram(message):
