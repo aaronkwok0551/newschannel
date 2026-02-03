@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HK News Monitor - Monitors news related to drugs, customs, and security bureau
+HK News Monitor - Uses AI to determine relevant news articles
 """
 
 import requests
@@ -15,12 +15,6 @@ import json
 
 # Hong Kong Timezone
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
-
-# Keywords to search for
-KEYWORDS = [
-    '毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', 
-    '依託咪酯', '禁毒', '毒品案', '戰時炸彈', '安全帶'
-]
 
 # RSS Sources to monitor
 RSS_SOURCES = {
@@ -60,13 +54,41 @@ def send_telegram(message):
         print(f"❌ Telegram error: {e}")
     return False
 
-def check_keyword(title):
-    """Check if title contains any keyword"""
-    title_lower = title.lower()
-    for keyword in KEYWORDS:
-        if keyword in title:
-            return True
-    return False
+def check_with_ai(title, source):
+    """Use AI to determine if news is related to drugs, customs, or security bureau"""
+    try:
+        from openai import OpenAI
+        client = OpenAI(
+            api_key=os.environ.get('MINIMAX_API_KEY', ''),
+            base_url="https://api.minimax.chat/v1"
+        )
+        
+        prompt = f"""請判斷以下香港新聞標題係咪同「香港毒品」、「香港海關」或「香港保安局」相關：
+
+新聞來源: {source}
+標題: {title}
+
+相關 topics:
+- 香港毒品相關 (毒品、緝毒、禁毒、太空油、依託咪酯)
+- 香港海關相關 (走私、截獲、檢獲)
+- 香港保安局相關 (鄧炳強、保安局政策)
+
+請只回答「YES」或「NO」"""
+
+        response = client.chat.completions.create(
+            model="MiniMax-M2.1",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=10,
+            temperature=0.1
+        )
+        
+        result = response.choices[0].message.content.strip().upper()
+        return result == 'YES'
+        
+    except Exception as e:
+        # Fallback to keyword if AI fails
+        keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', '禁毒', '走私']
+        return any(kw in title for kw in keywords)
 
 def parse_rss_source(name, url):
     """Parse RSS/JSON source and return matching articles"""
@@ -77,14 +99,14 @@ def parse_rss_source(name, url):
         if 'news.google.com' in url:
             # Google News RSS
             feed = feedparser.parse(url)
-            for entry in feed.entries:
-                if check_keyword(entry.title):
+            for entry in feed.entries[:30]:  # Limit to 30 entries
+                if check_with_ai(entry.title, name):
                     time_struct = getattr(entry, 'published_parsed', None)
                     if time_struct:
                         dt_obj = datetime.datetime.fromtimestamp(
                             time.mktime(time_struct), HK_TZ
                         )
-                        if (now - dt_obj).total_seconds() < 86400:  # Within 24 hours
+                        if (now - dt_obj).total_seconds() < 86400:
                             articles.append({
                                 'source': name,
                                 'title': entry.title.rsplit(' - ', 1)[0],
@@ -96,9 +118,9 @@ def parse_rss_source(name, url):
             # Wenweipo JSON
             response = requests.get(url, timeout=15)
             data = response.json()
-            for item in data.get('data', []):
+            for item in data.get('data', [])[:30]:
                 title = item.get('title', '')
-                if check_keyword(title):
+                if check_with_ai(title, '文匯報'):
                     pub_date = item.get('publishTime') or item.get('updated')
                     if pub_date:
                         try:
@@ -119,8 +141,8 @@ def parse_rss_source(name, url):
             # Regular RSS
             response = requests.get(url, timeout=15)
             feed = feedparser.parse(response.content)
-            for entry in feed.entries:
-                if check_keyword(entry.title):
+            for entry in feed.entries[:30]:
+                if check_with_ai(entry.title, name):
                     time_struct = getattr(entry, 'updated_parsed', None) or getattr(entry, 'published_parsed', None)
                     if time_struct:
                         dt_obj = datetime.datetime.fromtimestamp(
@@ -140,8 +162,8 @@ def parse_rss_source(name, url):
     return articles
 
 def main():
-    print(f"\n🕐 [{datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}] Starting news monitor...")
-    print(f"📡 Monitoring {len(RSS_SOURCES)} sources for keywords: {KEYWORDS[:5]}...\n")
+    print(f"\n🕐 [{datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d %H:%M:%S')}] Starting AI news monitor...")
+    print(f"📡 Monitoring {len(RSS_SOURCES)} sources with AI filtering...\n")
     
     all_articles = []
     
@@ -149,7 +171,7 @@ def main():
         print(f"📥 Fetching {name}...")
         articles = parse_rss_source(name, url)
         all_articles.extend(articles)
-        print(f"   → Found {len(articles)} matching articles")
+        print(f"   → Found {len(articles)} AI-matched articles")
     
     # Sort by time
     all_articles.sort(key=lambda x: x['datetime'], reverse=True)
@@ -158,7 +180,7 @@ def main():
     seen = set()
     unique_articles = []
     for article in all_articles:
-        title_key = article['title'][:30]  # First 30 chars as key
+        title_key = article['title'][:30]
         if title_key not in seen:
             seen.add(title_key)
             unique_articles.append(article)
@@ -167,26 +189,26 @@ def main():
     
     # Save to file for GitHub Actions
     with open('new_articles.txt', 'w', encoding='utf-8') as f:
-        for article in unique_articles[:15]:  # Max 15 articles
+        for article in unique_articles[:15]:
             f.write(f"• {article['source']} [{article['time']}] {article['title']}\n")
             f.write(f"  {article['link']}\n\n")
     
-    # Send notification if there are new articles
+    # Send notification
     if unique_articles:
-        message = f"📰 **香港即時新聞監測** ({len(unique_articles)}則)\n\n"
-        for article in unique_articles[:5]:  # First 5 in notification
+        message = f"📰 **香港毒品/海關/保安局新聞監測** ({len(unique_articles)}則)\n\n"
+        for article in unique_articles[:5]:
             message += f"• {article['source']} [{article['time']}] {article['title']}\n"
         
         message += f"\n... 同埋{len(unique_articles)-5}則更多\n"
         message += f"🔗 https://github.com/aaronkwok0551/newschannel"
         
-        # Only send if it's between 8am-10pm HKT
+        # Only send if 8am-10pm HKT
         now_hkt = datetime.datetime.now(HK_TZ)
         if 8 <= now_hkt.hour <= 22:
             send_telegram(message)
             print(f"\n✅ Notification sent for {len(unique_articles)} articles")
         else:
-            print(f"\n⏰ Outside monitoring hours (8am-10pm), notification skipped")
+            print(f"\n⏰ Outside monitoring hours, notification skipped")
     else:
         print("\n📭 No matching articles found")
     
