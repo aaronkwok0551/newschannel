@@ -153,7 +153,7 @@ def check_with_minimax(title, source):
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Is this Hong Kong drugs/customs news? YES or NO. Title: {title}"
+                            "text": f"Is this Hong Kong drugs/customs news? Reply YES or NO only."
                         }
                     ]
                 }
@@ -168,29 +168,59 @@ def check_with_minimax(title, source):
         if response.status_code == 200:
             result = response.json()
             
-            # Save full response for debugging
+            # Save full response
             try:
                 with open('minimax_response.json', 'w', encoding='utf-8') as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
-                print(f"   💾 Response saved to minimax_response.json")
+                print(f"   💾 Response saved")
             except:
                 pass
             
-            # Extract text from content blocks (proper extraction)
+            # Robust text extraction - try multiple methods
             assistant_text = ""
-            blocks = result.get("content", []) or []
-            for block in blocks:
-                if isinstance(block, dict):
-                    # Try different field names
-                    if block.get("type") == "text" and "text" in block:
-                        assistant_text += block["text"]
-                    elif "content" in block:
-                        content_val = block["content"]
-                        if isinstance(content_val, str):
-                            assistant_text += content_val
+            
+            # Method 1: Try content array
+            blocks = result.get("content", [])
+            if isinstance(blocks, list):
+                for block in blocks:
+                    if isinstance(block, dict):
+                        # text block
+                        if block.get("type") == "text" and "text" in block:
+                            assistant_text += block["text"]
+                        # content field
+                        elif "content" in block:
+                            c = block["content"]
+                            if isinstance(c, str):
+                                assistant_text += c
+            
+            # Method 2: Try message.content (OpenAI style)
+            if not assistant_text:
+                msg = result.get("message", {})
+                if isinstance(msg, dict):
+                    msg_content = msg.get("content", "")
+                    if isinstance(msg_content, str):
+                        assistant_text = msg_content
+            
+            # Method 3: Try choices
+            if not assistant_text:
+                choices = result.get("choices", [])
+                if choices and isinstance(choices, list):
+                    msg = choices[0].get("message", {})
+                    if isinstance(msg, dict):
+                        msg_content = msg.get("content", "")
+                        if isinstance(msg_content, str):
+                            assistant_text = msg_content
+            
+            # Method 4: Direct search for YES/NO in entire response
+            if not assistant_text:
+                resp_str = str(result)
+                if '"YES"' in resp_str or resp_str.endswith('"YES"') or resp_str.endswith('"YES"'):
+                    assistant_text = "YES"
+                elif '"NO"' in resp_str or resp_str.endswith('"NO"') or resp_str.endswith('"NO"'):
+                    assistant_text = "NO"
             
             assistant_text = assistant_text.strip()
-            print(f"   📝 Extracted text: {assistant_text[:100]}")
+            print(f"   📝 Extracted: {assistant_text[:100]}")
             
             if assistant_text.upper() == "YES":
                 print(f"   📝 AI answer: YES")
