@@ -2,9 +2,10 @@ name: HK News Monitor
 
 on:
   schedule:
-    # Every 15 minutes from 8am-10pm on weekdays (Hong Kong time UTC+8)
+    # Every hour at 30 minutes past from 8:30am-6:30pm on weekdays (Hong Kong time UTC+8)
     # Cron format: minute hour * * 1-5
-    - cron: '*/15 0-2,8-14 * * 1-5'
+    # 8:30 HKT = 00:30 UTC, 18:30 HKT = 10:30 UTC
+    - cron: '30 0-10 * * 1-5'
   workflow_dispatch:
     # Allow manual trigger
 
