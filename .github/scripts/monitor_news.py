@@ -60,10 +60,11 @@ def extract_text_from_response(resp):
         # Check for thinking-only response
         if text.startswith("We need to interpret") or len(text) < 15:
             resp_str = str(resp).lower()
-            if '"yes"' in resp_str or '"yes"' in resp_str:
-                return "YES"
-            elif '"no"' in resp_str or '"no"' in resp_str:
-                return "NO"
+            # Look for 1 or 0 in response
+            if '"1"' in resp_str or '"1"' in resp_str or resp_str.endswith('"1"') or resp_str.endswith('1"'):
+                return "1"
+            elif '"0"' in resp_str or '"0"' in resp_str or resp_str.endswith('"0"') or resp_str.endswith('0"'):
+                return "0"
         return text
     return ""
 
@@ -166,6 +167,11 @@ def check_with_minimax(title, source, asked_articles):
     api_key = os.environ.get('MINIMAX_API_KEY', '')
     group_id = os.environ.get('MINIMAX_GROUP_ID', '')
     
+    # Check if title is empty
+    if not title or not title.strip():
+        print(f"   🚫 Empty title, skipping")
+        return False
+    
     # Check if already asked today (deduplication)
     title_hash = get_title_hash(title)
     if title_hash in asked_articles:
@@ -214,7 +220,7 @@ def check_with_minimax(title, source, asked_articles):
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": f"Is this Hong Kong drugs/customs news? Reply YES or NO only. One word answer."
+                    "text": f"Is this Hong Kong drugs/customs news? Reply with ONLY 1 (yes) or 0 (no)."
                 }]
             }]
         }
@@ -235,7 +241,7 @@ def check_with_minimax(title, source, asked_articles):
             assistant_text = extract_text_from_response(result)
             print(f"   📝 AI response: {assistant_text}")
             
-            is_relevant = assistant_text.upper().strip() in ['YES', 'Relevant']
+            is_relevant = assistant_text.strip() in ['1', 'YES', 'Relevant']
             asked_articles[title_hash] = {
                 'asked_at': datetime.datetime.now(HK_TZ).isoformat(),
                 'result': 'YES' if is_relevant else 'NO'
