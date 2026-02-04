@@ -167,17 +167,22 @@ def check_with_minimax(title, source, asked_articles):
     api_key = os.environ.get('MINIMAX_API_KEY', '')
     group_id = os.environ.get('MINIMAX_GROUP_ID', '')
     
-    # Check if title is empty or too short - skip AI
+    # Check if title is empty or too short - skip AI (and return False)
     if not title or not title.strip() or len(title.strip()) < 5:
         print(f"   🚫 Empty/short title, skipping AI")
+        # Still record as asked to avoid re-checking
+        title_hash = get_title_hash(title)
+        if title_hash:
+            asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
         return False
     
-    # Check if already asked today (deduplication)
+    # Check if already asked today (deduplication) - PRIORITY!
     title_hash = get_title_hash(title)
     if title_hash in asked_articles:
         asked_info = asked_articles[title_hash]
-        print(f"   ⏭️ Already asked {asked_info['result']}: {title[:40]}...")
-        return asked_info.get('result') == 'YES'
+        result = asked_info.get('result', 'NO')
+        print(f"   ⏭️ Already asked: {result}")
+        return result == 'YES'
     
     # Keywords for fallback
     core_keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', 
