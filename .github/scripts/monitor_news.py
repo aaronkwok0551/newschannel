@@ -58,12 +58,12 @@ def extract_text_from_response(resp):
     if texts:
         text = texts[0]
         # Check for thinking-only response
-        if text.startswith("We need to interpret") or len(text) < 15:
+        if text.startswith("You must reply") or len(text) < 5:
             resp_str = str(resp).lower()
             # Look for 1 or 0 in response
-            if '"1"' in resp_str or '"1"' in resp_str or resp_str.endswith('"1"') or resp_str.endswith('1"'):
+            if '"1"' in resp_str or resp_str.endswith('"1"') or resp_str.endswith('1"') or resp_str.endswith('1'):
                 return "1"
-            elif '"0"' in resp_str or '"0"' in resp_str or resp_str.endswith('"0"') or resp_str.endswith('0"'):
+            elif '"0"' in resp_str or resp_str.endswith('"0"') or resp_str.endswith('0"') or resp_str.endswith('0'):
                 return "0"
         return text
     return ""
@@ -214,13 +214,14 @@ def check_with_minimax(title, source, asked_articles):
         
         data = {
             "model": "MiniMax-M2.1",
-            "max_tokens": 500,
-            "temperature": 0.1,
+            "max_tokens": 10,
+            "temperature": 0.0,
+            "system": "You must reply with EXACTLY ONE CHARACTER: '1' or '0'. No explanation, no punctuation, no thinking. Just a single digit.",
             "messages": [{
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": f"Is this Hong Kong drugs/customs news? Reply with ONLY 1 (yes) or 0 (no)."
+                    "text": f"Is \"{title[:200]}\" Hong Kong drugs/customs news? Reply 1 (yes) or 0 (no)."
                 }]
             }]
         }
@@ -241,7 +242,7 @@ def check_with_minimax(title, source, asked_articles):
             assistant_text = extract_text_from_response(result)
             print(f"   📝 AI response: {assistant_text}")
             
-            is_relevant = assistant_text.strip() in ['1', 'YES', 'Relevant']
+            is_relevant = assistant_text.strip() == "1"
             asked_articles[title_hash] = {
                 'asked_at': datetime.datetime.now(HK_TZ).isoformat(),
                 'result': 'YES' if is_relevant else 'NO'
