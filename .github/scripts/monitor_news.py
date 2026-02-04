@@ -70,13 +70,14 @@ def extract_text_from_response(resp):
 
 # RSS Sources to monitor
 RSS_SOURCES = {
+    'Google News': 'https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+戰時炸彈+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant',
     '政府新聞': 'https://www.info.gov.hk/gia/rss/general_zh.xml',
-    'HK01': 'https://news.hk01.com/rss/focus/2135',
-    'on.cc': 'https://news.on.cc/hk/import/rdf/news.rdf',
-    'now新聞': 'https://news.now.com/home/rss.xml',
-    'RTHK': 'https://rthk.hk/rthxnews/rss/c_expressnews_clocal.xml',
+    'RTHK': 'https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml',
+    'HK01': 'https://web-data.api.hk01.com/v2/feed/category/0',
     '星島': 'https://www.stheadline.com/rss',
     '明報': 'https://news.mingpao.com/rss/ins/all.xml',
+    'i-Cable': 'https://www.i-cable.com/feed',
+    'on.cc': 'https://rsshub-production-9dfc.up.railway.app/oncc/zh-hant/news',
 }
 
 def get_title_hash(title):
@@ -168,7 +169,7 @@ def check_with_minimax(title, source, asked_articles):
     group_id = os.environ.get('MINIMAX_GROUP_ID', '')
     
     # Check if title is empty or too short - skip AI (and return False)
-    if not title or not title.strip() or len(title.strip()) < 5:
+    if not title or not title.strip() or len(title.strip()) < 2:
         print(f"   🚫 Empty/short title, skipping AI")
         # Still record as asked to avoid re-checking
         title_hash = get_title_hash(title)
