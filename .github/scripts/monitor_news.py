@@ -167,9 +167,9 @@ def check_with_minimax(title, source, asked_articles):
     api_key = os.environ.get('MINIMAX_API_KEY', '')
     group_id = os.environ.get('MINIMAX_GROUP_ID', '')
     
-    # Check if title is empty
-    if not title or not title.strip():
-        print(f"   🚫 Empty title, skipping")
+    # Check if title is empty or too short - skip AI
+    if not title or not title.strip() or len(title.strip()) < 5:
+        print(f"   🚫 Empty/short title, skipping AI")
         return False
     
     # Check if already asked today (deduplication)
