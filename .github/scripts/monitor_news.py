@@ -181,7 +181,6 @@ def check_with_minimax(title, source, asked_articles):
     # Check if title is empty or too short - skip AI (and return False)
     if not title or not title.strip() or len(title.strip()) < 2:
         print(f"   🚫 Empty/short title, skipping AI")
-        # Still record as asked to avoid re-checking
         title_hash = get_title_hash(title)
         if title_hash:
             asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
@@ -199,17 +198,111 @@ def check_with_minimax(title, source, asked_articles):
     core_keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', 
                     '禁毒', '走私', '檢獲', '截獲', '販毒', '吸毒']
     hk_keywords = ['香港', '港島', '九龍', '新界', '本港', '香港海關', '香港警方']
-    exclude_regions = ['日本', '台灣', '珠海', '澳門', '澳洲', '中國', '內地', '大陸', 
-                       '深圳', '廣州', '北京', '上海', '泰國', '馬來西亞', '新加坡', 
+    
+    # Exclude regions (真正海外先排除)
+    exclude_regions = ['日本', '台灣', '澳洲', '泰國', '馬來西亞', '新加坡', 
                        '韓國', '英國', '美國', '加拿大']
     
-    # Region filter
+    # Region filter - 只排除真正海外
     for region in exclude_regions:
         if region in title:
             asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
             print(f"   🚫 Excluded (non-HK: {region})")
             return False
     
+    # --- HK-context org routing (fast path; reduces AI calls) ---
+    title_l = title.lower()
+    
+    # 強機構詞：一見到幾乎肯定你想要
+    strong_org = ["香港海關", "hong kong customs", "保安局", "security bureau", 
+                  "禁毒處", "adcc", "鄧炳強"]
+    
+    # 弱詞：可能係海外海關
+    weak_org = ["海關", "customs"]
+    
+    # 香港上下文
+    hk_ctx = ["香港", "本港", "hksar", "hong kong", "港"]
+    
+    # 香港媒體來源
+    hk_sources = {"政府新聞", "RTHK", "HK01", "星島", "明報", "i-Cable", "on.cc", 
+                  "Google News", "文匯報", "am730", "東方日報", "都市日報"}
+    
+    has_strong = any(k in title for k in strong_org) or any(k in title_l for k in strong_org)
+    has_weak = any(k in title for k in weak_org) or any(k in title_l for k in weak_org)
+    has_hk_context = (any(k in title for k in hk_ctx) or 
+                      any(k in title_l for k in hk_ctx) or 
+                      (source in hk_sources))
+    
+    # 規則 1：強機構 + 香港上下文 → 直接 YES（免 AI）
+    if has_strong and has_hk_context:
+        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES'}
+        print("   ✅ Strong org + HK context (no AI)")
+        return True
+    
+    # 規則 2：弱機構（海關）+ 香港上下文 → 直接 YES（免 AI）
+    if has_weak and has_hk_context:
+        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES'}
+        print("   ✅ Customs + HK context (no AI)")
+        return True
+    
+    # 規則 3：完全無命中機構 → 直接 NO（免 AI）
+    if not (has_strong or has_weak):
+        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
+        print("   🚫 No org hit (no AI)")
+        return False
+    
+    # 規則 4：命中機構但無香港上下文 → 保守 NO
+    asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
+    print("   🚫 Org hit but no HK context (rule-based NO)")
+    return False
+    
+    # --- End HK-context routing ---
+        url = "https://api.minimax.io/anthropic/v1/messages"
+    # --- HK-context org routing (fast path; reduces AI calls) ---
+    title_l = title.lower()
+    
+    # 強機構詞：一見到幾乎肯定你想要
+    strong_org = ["香港海關", "hong kong customs", "保安局", "security bureau", 
+                  "禁毒處", "adcc", "鄧炳強"]
+    
+    # 弱詞：可能係海外海關
+    weak_org = ["海關", "customs"]
+    
+    # 香港上下文
+    hk_ctx = ["香港", "本港", "hksar", "hong kong", "港"]
+    
+    # 香港媒體來源
+    hk_sources = {"政府新聞", "RTHK", "HK01", "星島", "明報", "i-Cable", "on.cc", 
+                  "Google News", "文匯報", "am730", "東方日報", "都市日報"}
+    
+    has_strong = any(k in title for k in strong_org) or any(k in title_l for k in strong_org)
+    has_weak = any(k in title for k in weak_org) or any(k in title_l for k in weak_org)
+    has_hk_context = (any(k in title for k in hk_ctx) or 
+                      any(k in title_l for k in hk_ctx) or 
+                      (source in hk_sources))
+    
+    # 規則 1：強機構 + 香港上下文 → 直接 YES（免 AI）
+    if has_strong and has_hk_context:
+        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES'}
+        print("   ✅ Strong org + HK context (no AI)")
+        return True
+    
+    # 規則 2：弱機構（海關）+ 香港上下文 → 直接 YES（免 AI）
+    if has_weak and has_hk_context:
+        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES'}
+        print("   ✅ Customs + HK context (no AI)")
+        return True
+    
+    # 規則 3：完全無命中機構 → 直接 NO（免 AI）
+    if not (has_strong or has_weak):
+        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
+        print("   🚫 No org hit (no AI)")
+        return False
+    
+    # 規則 4：命中機構但無香港上下文 → AI 協助判斷
+    # 呢度需要AI，因為可能係海外海關新聞但涉及香港
+    
+    # --- AI fallback ---
     if not api_key:
         print(f"   ⚠️ No API key - using keyword fallback")
         has_core = any(kw in title for kw in core_keywords)
