@@ -51,31 +51,32 @@ def collect_text(obj, out):
             collect_text(v, out)
 
 def extract_text_from_response(resp):
-    """Extract final text from MiniMax response - look for text block first"""
-    # First, try to find a "text" type content block (actual answer)
-    if isinstance(resp, dict) and "content" in resp:
-        content = resp["content"]
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict):
-                    # Look for text block (actual answer)
-                    if block.get("type") == "text" and "text" in block:
-                        return block["text"]
-                    # Skip thinking blocks
-                    if block.get("type") == "thinking":
-                        continue
+    """Extract final text from MiniMax response - strict 1/0 extraction"""
+    import re
     
-    # Fallback: search for 1 or 0 in entire response
-    resp_str = str(resp).lower()
-    # Look for standalone 1 or 0
-    if resp_str.endswith('"1"') or resp_str.endswith('"0"') or resp_str.endswith('1"') or resp_str.endswith('0"') or resp_str.endswith('1') or resp_str.endswith('0'):
-        # Get just the digit
-        if '1' in resp_str[-10:]:
-            return "1"
-        elif '0' in resp_str[-10:]:
-            return "0"
+    # 完整response文字
+    full_text = str(resp)
     
-    return ""
+    # 先移除thinking blocks
+    clean = re.sub(r"<think>.*?</think>", "", full_text, flags=re.S).strip()
+    
+    # 嚴格：直接係 "1" 或 "0"
+    if clean == "1":
+        return "1"
+    if clean == "0":
+        return "0"
+    
+    # 二次檢查：從response尾部提取
+    # MiniMax通常會喺最後output答案
+    lines = clean.split('\n')
+    for line in reversed(lines):
+        line = line.strip()
+        if line in ['1', '0']:
+            return line
+    
+    # 二次檢查：search for 1 or 0
+    m = re.search(r'\b([01])\b', clean)
+    return m.group(1) if m else ""
 
 # RSS Sources to monitor
 RSS_SOURCES = {
@@ -270,8 +271,8 @@ def check_with_minimax(title, source, asked_articles):
             assistant_text = extract_text_from_response(result)
             print(f"   📝 AI response: {assistant_text}")
             
-            # Accept YES, yes, 1 as relevant
-            is_relevant = assistant_text.strip().upper() in ['YES', '1']
+            # Check if AI returned 1 (relevant)
+            is_relevant = assistant_text == '1'
             asked_articles[title_hash] = {
                 'asked_at': datetime.datetime.now(HK_TZ).isoformat(),
                 'result': 'YES' if is_relevant else 'NO'
