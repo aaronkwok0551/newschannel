@@ -51,22 +51,29 @@ def collect_text(obj, out):
             collect_text(v, out)
 
 def extract_text_from_response(resp):
-    """Extract final text from MiniMax response - handle thinking blocks"""
+    """Extract final text from MiniMax response - look for text block first"""
+    # First, try to find a "text" type content block
+    if isinstance(resp, dict) and "content" in resp:
+        content = resp["content"]
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    # Look for text block (actual answer)
+                    if block.get("type") == "text" and "text" in block:
+                        return block["text"]
+    
+    # Fallback: search for 1 or 0 in entire response
+    resp_str = str(resp).lower()
+    # Look for 1 or 0 as standalone
+    if '"1"' in resp_str or resp_str.endswith('"1"') or resp_str.endswith('1"') or resp_str.endswith('1'):
+        return "1"
+    elif '"0"' in resp_str or resp_str.endswith('"0"') or resp_str.endswith('0"') or resp_str.endswith('0'):
+        return "0"
+    
+    # Last resort: collect all text
     texts = []
     collect_text(resp, texts)
-    
-    if texts:
-        text = texts[0]
-        # Check for thinking-only response
-        if text.startswith("You must reply") or len(text) < 5:
-            resp_str = str(resp).lower()
-            # Look for 1 or 0 in response
-            if '"1"' in resp_str or resp_str.endswith('"1"') or resp_str.endswith('1"') or resp_str.endswith('1'):
-                return "1"
-            elif '"0"' in resp_str or resp_str.endswith('"0"') or resp_str.endswith('0"') or resp_str.endswith('0'):
-                return "0"
-        return text
-    return ""
+    return texts[0] if texts else ""
 
 # RSS Sources to monitor
 RSS_SOURCES = {
@@ -220,14 +227,13 @@ def check_with_minimax(title, source, asked_articles):
         
         data = {
             "model": "MiniMax-M2.1",
-            "max_tokens": 10,
+            "max_tokens": 50,
             "temperature": 0.0,
-            "system": "You must reply with EXACTLY ONE CHARACTER: '1' or '0'. No explanation, no punctuation, no thinking. Just a single digit.",
             "messages": [{
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": f"Is \"{title[:200]}\" Hong Kong drugs/customs news? Reply 1 (yes) or 0 (no)."
+                    "text": "Answer only YES or NO. Is this Hong Kong drugs/customs news: " + title[:200]
                 }]
             }]
         }
@@ -248,7 +254,8 @@ def check_with_minimax(title, source, asked_articles):
             assistant_text = extract_text_from_response(result)
             print(f"   📝 AI response: {assistant_text}")
             
-            is_relevant = assistant_text.strip() == "1"
+            # Accept YES, yes, 1 as relevant
+            is_relevant = assistant_text.strip().upper() in ['YES', '1']
             asked_articles[title_hash] = {
                 'asked_at': datetime.datetime.now(HK_TZ).isoformat(),
                 'result': 'YES' if is_relevant else 'NO'
