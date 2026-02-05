@@ -52,7 +52,7 @@ def collect_text(obj, out):
 
 def extract_text_from_response(resp):
     """Extract final text from MiniMax response - look for text block first"""
-    # First, try to find a "text" type content block
+    # First, try to find a "text" type content block (actual answer)
     if isinstance(resp, dict) and "content" in resp:
         content = resp["content"]
         if isinstance(content, list):
@@ -61,19 +61,21 @@ def extract_text_from_response(resp):
                     # Look for text block (actual answer)
                     if block.get("type") == "text" and "text" in block:
                         return block["text"]
+                    # Skip thinking blocks
+                    if block.get("type") == "thinking":
+                        continue
     
     # Fallback: search for 1 or 0 in entire response
     resp_str = str(resp).lower()
-    # Look for 1 or 0 as standalone
-    if '"1"' in resp_str or resp_str.endswith('"1"') or resp_str.endswith('1"') or resp_str.endswith('1'):
-        return "1"
-    elif '"0"' in resp_str or resp_str.endswith('"0"') or resp_str.endswith('0"') or resp_str.endswith('0'):
-        return "0"
+    # Look for standalone 1 or 0
+    if resp_str.endswith('"1"') or resp_str.endswith('"0"') or resp_str.endswith('1"') or resp_str.endswith('0"') or resp_str.endswith('1') or resp_str.endswith('0'):
+        # Get just the digit
+        if '1' in resp_str[-10:]:
+            return "1"
+        elif '0' in resp_str[-10:]:
+            return "0"
     
-    # Last resort: collect all text
-    texts = []
-    collect_text(resp, texts)
-    return texts[0] if texts else ""
+    return ""
 
 # RSS Sources to monitor
 RSS_SOURCES = {
@@ -227,13 +229,27 @@ def check_with_minimax(title, source, asked_articles):
         
         data = {
             "model": "MiniMax-M2.1",
-            "max_tokens": 50,
+            "max_tokens": 1,
             "temperature": 0.0,
             "messages": [{
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": "Answer only YES or NO. Is this Hong Kong drugs/customs news: " + title[:200]
+                    "text": f"""你是一個二元分類器。任務：判斷下列新聞是否與毒品/禁毒直接相關。
+
+判定為「有關(1)」的例子：
+- 販毒/吸毒/藏毒/毒品檢獲/毒品罪行/受控藥物/禁毒政策/禁毒宣傳/戒毒治療/海關/依托咪酯/走私/禁毒處/保安局
+
+判定為「無關(0)」：
+- 純治安或其他罪案但未提及毒品
+- 只提到「藥物」但明顯是一般醫療用藥，非濫用/管制/毒品議題
+
+資訊不足：輸出 0。
+
+輸出規則（必須嚴格遵守）：
+只輸出單一字元：1 或 0。禁止輸出任何其他字、符號、空格、換行、解釋或Thinking。
+
+新聞：{title}"""
                 }]
             }]
         }
