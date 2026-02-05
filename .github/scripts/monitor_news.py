@@ -300,71 +300,93 @@ def log_daily_summary(new_articles, sent_count):
 def parse_rss_source(name, url, sent_articles, asked_articles):
     """Parse RSS/JSON source and return matching articles"""
     articles = []
+    now_hkt = datetime.datetime.now(HK_TZ)
     
     try:
         if 'news.google.com' in url:
             feed = feedparser.parse(url)
+            print(f"   📰 Found {len(feed.entries)} entries from Google News")
             for entry in feed.entries[:30]:
                 link = entry.link
                 if link in sent_articles:
                     continue
                 
+                # Check date FIRST
+                time_struct = getattr(entry, 'published_parsed', None)
+                if not time_struct:
+                    continue
+                
+                dt_obj = datetime.datetime.fromtimestamp(time.mktime(time_struct), HK_TZ)
+                if not is_today(dt_obj):
+                    continue
+                
+                print(f"   📄 Today: {entry.title[:50]}...")
                 if check_with_minimax(entry.title, name, asked_articles):
-                    time_struct = getattr(entry, 'published_parsed', None)
-                    if time_struct:
-                        dt_obj = datetime.datetime.fromtimestamp(time.mktime(time_struct), HK_TZ)
-                        if is_today(dt_obj):
-                            articles.append({
-                                'source': name,
-                                'title': entry.title.rsplit(' - ', 1)[0],
-                                'link': link,
-                                'datetime': dt_obj
-                            })
+                    articles.append({
+                        'source': name,
+                        'title': entry.title.rsplit(' - ', 1)[0],
+                        'link': link,
+                        'datetime': dt_obj
+                    })
         
         elif 'wenweipo.com' in url:
             response = requests.get(url, timeout=15)
             data = response.json()
-            for item in data.get('data', [])[:30]:
+            items = data.get('data', [])[:30]
+            print(f"   📰 Found {len(items)} entries from 文匯報")
+            for item in items:
                 title = item.get('title', '')
                 link = item.get('url', '')
                 if link in sent_articles:
                     continue
                 
-                if check_with_minimax(title, '文匯報', asked_articles):
-                    pub_date = item.get('publishTime') or item.get('updated')
-                    if pub_date:
-                        try:
-                            dt_obj = datetime.datetime.strptime(pub_date, "%Y-%m-%dT%H:%M:%S.%f%z")
-                            dt_obj = dt_obj.astimezone(HK_TZ)
-                            if is_today(dt_obj):
-                                articles.append({
-                                    'source': '文匯報',
-                                    'title': title,
-                                    'link': link,
-                                    'datetime': dt_obj
-                                })
-                        except:
-                            pass
+                pub_date = item.get('publishTime') or item.get('updated')
+                if not pub_date:
+                    continue
+                
+                try:
+                    dt_obj = datetime.datetime.strptime(pub_date, "%Y-%m-%dT%H:%M:%S.%f%z")
+                    dt_obj = dt_obj.astimezone(HK_TZ)
+                    if not is_today(dt_obj):
+                        continue
+                    
+                    print(f"   📄 Today: {title[:50]}...")
+                    if check_with_minimax(title, '文匯報', asked_articles):
+                        articles.append({
+                            'source': '文匯報',
+                            'title': title,
+                            'link': link,
+                            'datetime': dt_obj
+                        })
+                except:
+                    pass
         
         else:
             response = requests.get(url, timeout=15)
             feed = feedparser.parse(response.content)
+            print(f"   📰 Found {len(feed.entries)} entries from {name}")
             for entry in feed.entries[:30]:
                 link = entry.link
                 if link in sent_articles:
                     continue
                 
+                # Check date FIRST
+                time_struct = getattr(entry, 'updated_parsed', None) or getattr(entry, 'published_parsed', None)
+                if not time_struct:
+                    continue
+                
+                dt_obj = datetime.datetime.fromtimestamp(time.mktime(time_struct), HK_TZ)
+                if not is_today(dt_obj):
+                    continue
+                
+                print(f"   📄 Today: {entry.title[:50]}...")
                 if check_with_minimax(entry.title, name, asked_articles):
-                    time_struct = getattr(entry, 'updated_parsed', None) or getattr(entry, 'published_parsed', None)
-                    if time_struct:
-                        dt_obj = datetime.datetime.fromtimestamp(time.mktime(time_struct), HK_TZ)
-                        if is_today(dt_obj):
-                            articles.append({
-                                'source': name,
-                                'title': entry.title.rsplit(' - ', 1)[0],
-                                'link': link,
-                                'datetime': dt_obj
-                            })
+                    articles.append({
+                        'source': name,
+                        'title': entry.title.rsplit(' - ', 1)[0],
+                        'link': link,
+                        'datetime': dt_obj
+                    })
     
     except Exception as e:
         print(f"❌ Error fetching {name}: {e}")
