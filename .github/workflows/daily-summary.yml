@@ -1,0 +1,107 @@
+name: Daily News Summary
+
+on:
+  schedule:
+    # Daily at 9:30am HK time (01:30 UTC) - summarize yesterday's news
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+    # Manual trigger
+
+jobs:
+  daily_summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: pip install requests pytz
+      
+      - name: Generate Yesterday's Summary
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 << 'PYEOF'
+import os
+import datetime
+import json
+
+BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+HK_TZ = datetime.timezone(datetime.timedelta(hours=8))
+
+yesterday = (datetime.datetime.now(HK_TZ) - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+
+# Try to read yesterday's log
+log_file = 'daily_log.md'
+summary = f"📊 **新聞摘要 - {yesterday}**\n\n"
+
+try:
+    if os.path.exists(log_file):
+        with open(log_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Check if yesterday's entries exist
+        if yesterday in content:
+            # Extract yesterday's section
+            lines = content.split('\n')
+            in_section = False
+            yesterday_lines = []
+            
+            for line in lines:
+                if yesterday in line and '## ' in line:
+                    in_section = True
+                    yesterday_lines.append(line)
+                elif in_section and line.startswith('## '):
+                    break
+                elif in_section:
+                    yesterday_lines.append(line)
+            
+            section_text = '\n'.join(yesterday_lines)
+            
+            # Extract article count and links
+            import re
+            articles = re.findall(r'- \[(.*?)\] (.*?)$', section_text, re.MULTILINE)
+            
+            if articles:
+                summary += f"📰 **共 {len(articles)} 篇相關新聞**\n\n"
+                for source, title in articles[:10]:  # Max 10 articles
+                    clean_title = title.strip().replace('...', '')
+                    summary += f"• {source}: {clean_title}\n"
+                
+                if len(articles) > 10:
+                    summary += f"\n...仲有 {len(articles) - 10} 篇"
+            else:
+                summary += "📰 冇記錄到相關新聞"
+        else:
+            summary += f"📰 冇找到 {yesterday} 的新聞記錄"
+    else:
+        summary += "📰 冇新聞記錄檔案"
+        
+except Exception as e:
+    summary += f"\n⚠️ 獲取摘要時出錯: {e}"
+
+# Send to Telegram
+if BOT_TOKEN and CHAT_ID:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": summary, "parse_mode": "Markdown"}
+    try:
+        import requests
+        resp = requests.post(url, json=data, timeout=10)
+        if resp.ok:
+            print("✅ Summary sent to Telegram")
+        else:
+            print(f"❌ Telegram failed: {resp.text}")
+    except Exception as e:
+        print(f"❌ Telegram error: {e}")
+
+print(summary)
+PYEOF
