@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,4 +34,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          GIT_TOKEN: ${{ secrets.GH_TOKEN }}
         run: python .github/scripts/monitor_news.py || echo "Monitor completed"
+      
+      - name: Commit log file
+        if: always()
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add daily_log.md
+          git commit -m "Update daily log - $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
+          git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }} HEAD:main || echo "Push failed (might be no changes)"
