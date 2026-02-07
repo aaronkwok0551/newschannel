@@ -260,6 +260,15 @@ def check_with_minimax(title, source, asked_articles):
         has_core = any(kw in title for kw in core_keywords)
         has_hk = any(kw in title for kw in hk_keywords)
         result = has_core and has_hk
+    # No API key - keyword fallback
+    if not api_key:
+        print(f"   ⚠️ No API key - using keyword fallback")
+        core_keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', 
+                         '禁毒', '走私', '檢獲', '截獲', '販毒', '吸毒']
+        hk_keywords = ['香港', '港島', '九龍', '新界', '本港', '香港海關', '香港警方']
+        has_core = any(kw in title for kw in core_keywords)
+        has_hk = any(kw in title for kw in hk_keywords)
+        result = has_core and has_hk
         asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES' if result else 'NO'}
         print(f"   🔍 Keyword check: {result}")
         return result
@@ -345,33 +354,6 @@ def check_with_minimax(title, source, asked_articles):
         result = has_core and has_hk
         asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES' if result else 'NO'}
         return result
-
-def log_daily_summary(new_articles, sent_count):
-    """Log daily summary to markdown file"""
-    try:
-        today = datetime.datetime.now(HK_TZ).strftime('%Y-%m-%d')
-        log_entry = f"\n## {today}\n"
-        log_entry += f"- **Checked**: {len(new_articles)} new articles\n"
-        log_entry += f"- **Sent**: {sent_count} articles\n"
-        
-        if new_articles:
-            log_entry += "\n**Articles**:\n"
-            for art in new_articles[:10]:
-                log_entry += f"- [{art['source']}] {art['title'][:50]}...\n"
-        
-        # Prepend to log file
-        if os.path.exists(DAILY_LOG_FILE):
-            with open(DAILY_LOG_FILE, 'r', encoding='utf-8') as f:
-                existing = f.read()
-        else:
-            existing = "# Daily News Log\n"
-        
-        with open(DAILY_LOG_FILE, 'w', encoding='utf-8') as f:
-            f.write(log_entry + "\n" + existing)
-        
-        print(f"   📝 Daily log updated")
-    except Exception as e:
-        print(f"   ⚠️ Log error: {e}")
 
 def parse_rss_source(name, url, sent_articles, asked_articles):
     """Parse RSS/JSON source and return matching articles"""
