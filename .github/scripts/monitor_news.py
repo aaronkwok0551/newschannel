@@ -173,12 +173,13 @@ def send_telegram(message):
         print(f"❌ Telegram error: {e}")
     return False
 
+
 def check_with_minimax(title, source, asked_articles):
     """Use MiniMax AI to check if news is relevant - with deduplication"""
     api_key = os.environ.get('MINIMAX_API_KEY', '')
     group_id = os.environ.get('MINIMAX_GROUP_ID', '')
     
-    # Check if title is empty or too short - skip AI (and return False)
+    # Check if title is empty or too short
     if not title or not title.strip() or len(title.strip()) < 2:
         print(f"   🚫 Empty/short title, skipping AI")
         title_hash = get_title_hash(title)
@@ -186,18 +187,13 @@ def check_with_minimax(title, source, asked_articles):
             asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
         return False
     
-    # Check if already asked today (deduplication) - PRIORITY!
+    # Check if already asked today (deduplication)
     title_hash = get_title_hash(title)
     if title_hash in asked_articles:
         asked_info = asked_articles[title_hash]
         result = asked_info.get('result', 'NO')
         print(f"   ⏭️ Already asked: {result}")
         return result == 'YES'
-    
-    # Keywords for fallback
-    core_keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', 
-                    '禁毒', '走私', '檢獲', '截獲', '販毒', '吸毒']
-    hk_keywords = ['香港', '港島', '九龍', '新界', '本港', '香港海關', '香港警方']
     
     # Exclude regions (真正海外先排除)
     exclude_regions = ['日本', '台灣', '澳洲', '泰國', '馬來西亞', '新加坡', 
@@ -213,11 +209,12 @@ def check_with_minimax(title, source, asked_articles):
     # --- HK-context org routing (fast path; reduces AI calls) ---
     title_l = title.lower()
     
-    # 強機構詞：一見到幾乎肯定你想要
+    # 強機構詞
     strong_org = ["香港海關", "hong kong customs", "保安局", "security bureau", 
-                  "禁毒處", "adcc", "鄧炳強"]
+                  "禁毒處", "adcc", "鄧炳強", "販毒", "吸毒", "藏毒", "緝毒", 
+                  "毒品", "檢獲", "走私毒品", "海關檢獲"]
     
-    # 弱詞：可能係海外海關
+    # 弱詞
     weak_org = ["海關", "customs"]
     
     # 香港上下文
@@ -233,78 +230,33 @@ def check_with_minimax(title, source, asked_articles):
                       any(k in title_l for k in hk_ctx) or 
                       (source in hk_sources))
     
-    # 規則 1：強機構 + 香港上下文 → 直接 YES（免 AI）
+    # 規則 1：強機構 + 香港上下文 → 直接 YES
     if has_strong and has_hk_context:
         asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES'}
         print("   ✅ Strong org + HK context (no AI)")
         return True
     
-    # 規則 2：弱機構（海關）+ 香港上下文 → 直接 YES（免 AI）
+    # 規則 2：弱機構 + 香港上下文 → 直接 YES
     if has_weak and has_hk_context:
         asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES'}
         print("   ✅ Customs + HK context (no AI)")
         return True
     
-    # 規則 3：完全無命中機構 → 直接 NO（免 AI）
+    # 規則 3：完全無命中機構 → 直接 NO
     if not (has_strong or has_weak):
         asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
         print("   🚫 No org hit (no AI)")
         return False
     
-    # 規則 4：命中機構但無香港上下文 → 保守 NO
-    asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
-    print("   🚫 Org hit but no HK context (rule-based NO)")
-    return False
+    # 規則 4：命中機構但無香港上下文 → AI fallback
+    # (呢度可能係海外海關新聞，需要AI判斷)
     
-    # --- End HK-context routing ---
-        url = "https://api.minimax.io/anthropic/v1/messages"
-    # --- HK-context org routing (fast path; reduces AI calls) ---
-    title_l = title.lower()
-    
-    # 強機構詞：一見到幾乎肯定你想要
-    strong_org = ["香港海關", "hong kong customs", "保安局", "security bureau", 
-                  "禁毒處", "adcc", "鄧炳強"]
-    
-    # 弱詞：可能係海外海關
-    weak_org = ["海關", "customs"]
-    
-    # 香港上下文
-    hk_ctx = ["香港", "本港", "hksar", "hong kong", "港"]
-    
-    # 香港媒體來源
-    hk_sources = {"政府新聞", "RTHK", "HK01", "星島", "明報", "i-Cable", "on.cc", 
-                  "Google News", "文匯報", "am730", "東方日報", "都市日報"}
-    
-    has_strong = any(k in title for k in strong_org) or any(k in title_l for k in strong_org)
-    has_weak = any(k in title for k in weak_org) or any(k in title_l for k in weak_org)
-    has_hk_context = (any(k in title for k in hk_ctx) or 
-                      any(k in title_l for k in hk_ctx) or 
-                      (source in hk_sources))
-    
-    # 規則 1：強機構 + 香港上下文 → 直接 YES（免 AI）
-    if has_strong and has_hk_context:
-        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES'}
-        print("   ✅ Strong org + HK context (no AI)")
-        return True
-    
-    # 規則 2：弱機構（海關）+ 香港上下文 → 直接 YES（免 AI）
-    if has_weak and has_hk_context:
-        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'YES'}
-        print("   ✅ Customs + HK context (no AI)")
-        return True
-    
-    # 規則 3：完全無命中機構 → 直接 NO（免 AI）
-    if not (has_strong or has_weak):
-        asked_articles[title_hash] = {'asked_at': datetime.datetime.now(HK_TZ).isoformat(), 'result': 'NO'}
-        print("   🚫 No org hit (no AI)")
-        return False
-    
-    # 規則 4：命中機構但無香港上下文 → AI 協助判斷
-    # 呢度需要AI，因為可能係海外海關新聞但涉及香港
-    
-    # --- AI fallback ---
+    # No API key - keyword fallback
     if not api_key:
         print(f"   ⚠️ No API key - using keyword fallback")
+        core_keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', 
+                         '禁毒', '走私', '檢獲', '截獲', '販毒', '吸毒']
+        hk_keywords = ['香港', '港島', '九龍', '新界', '本港', '香港海關', '香港警方']
         has_core = any(kw in title for kw in core_keywords)
         has_hk = any(kw in title for kw in hk_keywords)
         result = has_core and has_hk
@@ -312,6 +264,7 @@ def check_with_minimax(title, source, asked_articles):
         print(f"   🔍 Keyword check: {result}")
         return result
     
+    # Call MiniMax API
     try:
         url = "https://api.minimax.io/anthropic/v1/messages"
         headers = {
@@ -373,6 +326,9 @@ def check_with_minimax(title, source, asked_articles):
             return is_relevant
         
         print(f"   ⚠️ API error, using keyword fallback")
+        core_keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', 
+                         '禁毒', '走私', '檢獲', '截獲', '販毒', '吸毒']
+        hk_keywords = ['香港', '港島', '九龍', '新界', '本港', '香港海關', '香港警方']
         has_core = any(kw in title for kw in core_keywords)
         has_hk = any(kw in title for kw in hk_keywords)
         result = has_core and has_hk
@@ -381,6 +337,9 @@ def check_with_minimax(title, source, asked_articles):
         
     except Exception as e:
         print(f"   ❌ AI check failed: {e}")
+        core_keywords = ['毒品', '海關', '保安局', '鄧炳強', '緝毒', '太空油', '依託咪酯', 
+                         '禁毒', '走私', '檢獲', '截獲', '販毒', '吸毒']
+        hk_keywords = ['香港', '港島', '九龍', '新界', '本港', '香港海關', '香港警方']
         has_core = any(kw in title for kw in core_keywords)
         has_hk = any(kw in title for kw in hk_keywords)
         result = has_core and has_hk
