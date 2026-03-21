@@ -279,24 +279,29 @@ if st.session_state.show_preview: show_txt_preview()
 st.title("Tommy Sir 後援會之新聞監察系統")
 rows = [source_configs[i:i + 4] for i in range(0, len(source_configs), 4)]
 
-for row in rows:
-    cols = st.columns(4)
-    for col, conf in zip(cols, row):
-        with col:
-            items = news_data_map.get(conf['name'], [])
-            with st.container(height=800, border=True):
-                st.markdown(f"<div class='news-source-header' style='border-left: 5px solid {conf['color']}'><div>{conf['name']}</div><span class='status-badge'>{len(items)} 則</span></div>", unsafe_allow_html=True)
-                if not items: st.caption("暫無資料")
-                else:
-                    for item in items:
+for item in items:
                         link = item['link']
                         is_selected = link in st.session_state.selected_links
                         c1, c2 = st.columns([0.15, 0.85])
+                        
                         with c1:
                             if st.checkbox("", key=f"chk_{link}", value=is_selected):
                                 st.session_state.selected_links.add(link)
                             else:
-                                if link in st.session_state.selected_links: st.session_state.selected_links.remove(link)
+                                if link in st.session_state.selected_links:
+                                    st.session_state.selected_links.remove(link)
+                        
                         with c2:
+                            # --- 修正處：先把樣式字串算出來，避免在 f-string 內使用反斜線 ---
                             badge = '<span class="new-badge">NEW!</span>' if is_new_news(item['timestamp']) else ''
-                            st.markdown(f'<div class="news-item-row">{badge}<a href="{link}" target="_blank" {"class=\'read-text\'" if is_selected else ""}>{html.escape(item["title"])}</a><div class="news-time">{item["time_str"]}</div></div>', unsafe_allow_html=True)
+                            title_class = 'class="read-text"' if is_selected else ""
+                            
+                            # 組合 HTML
+                            item_html = f'''
+                                <div class="news-item-row">
+                                    {badge}
+                                    <a href="{link}" target="_blank" {title_class}>{html.escape(item["title"])}</a>
+                                    <div class="news-time">{item["time_str"]}</div>
+                                </div>
+                            '''
+                            st.markdown(item_html, unsafe_allow_html=True)
