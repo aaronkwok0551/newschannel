@@ -68,20 +68,22 @@ HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 def clean_title(raw_title: str) -> str:
     """關鍵修正：自動剝除 HTML 標籤，解決紅色代碼問題"""
     if not raw_title: return ""
-    # 使用 BeautifulSoup 剝掉所有 HTML 標籤 (例如 <a>, <span> 等)
+    # 使用 BeautifulSoup 剝掉所有 HTML 標籤
     soup = BeautifulSoup(raw_title, "html.parser")
     text = soup.get_text()
-    # 移除多餘換行與空格
+    # 移除 Now 新聞常見的時間標記字眼 (防止標題變成長篇簡介)
+    text = re.sub(r'\d+(分鐘|小時|天)前.*', '', text)
     return text.replace('\n', ' ').strip()
 
 def clean_url(url: str) -> str:
-    """修正信報域名與連結去重"""
+    """修正網址前綴與連結去重"""
     if not url: return ""
     url = url.strip()
     if "hkej.com" in url:
-        url = url.replace("m.hkej.com", "www.hkej.com") # 統一使用電腦版域名
-        url = re.sub(r'\++$', '', url) # 移除末尾 ++
-    if "news.now.com" in url: return urllib.parse.quote(url, safe=":/%?=&")
+        url = url.replace("m.hkej.com", "www.hkej.com")
+        url = re.sub(r'\++$', '', url)
+    if "news.now.com" in url:
+        return urllib.parse.quote(url, safe=":/%?=&")
     return urllib.parse.quote(url.split('?')[0], safe=":/%?=&")
 
 def is_new_news(timestamp):
@@ -105,31 +107,27 @@ def fetch_source(config):
                     dt = datetime.datetime.strptime(item.get('updated'), "%Y-%m-%dT%H:%M:%S.%f%z")
                     data.append({'source': config['name'], 'title': clean_title(item.get('title')), 'link': clean_url(item.get('url')), 'timestamp': dt})
             
-            elif config['type'] == 'now_api':
-                r = requests.get("https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1", timeout=15)
-                for item in r.json().get('data', []):
-                    dt = datetime.datetime.fromtimestamp(item.get('publishDate')/1000, HK_TZ)
-                    data.append({'source': config['name'], 'title': clean_title(item.get('newsTitle')), 'link': f"https://news.now.com/home/local/player?newsId={item.get('newsId')}", 'timestamp': dt})
-            
             elif config['type'] == 'rss':
                 r = requests.get(u, headers=HEADERS, timeout=20, verify=False)
                 feed = feedparser.parse(r.content)
                 for entry in feed.entries:
                     t_title = clean_title(getattr(entry, "title", ""))
                     t_link = getattr(entry, "link", "")
-                    # 補全相對路徑
+                    
+                    # 補全相對路徑邏輯
                     if t_link.startswith("/"):
                         if "4xPuKWS" in u: t_link = f"https://www.881903.com{t_link}"
                         elif "7vsPHGi" in u: t_link = f"https://www.i-cable.com{t_link}"
                         elif "tBTzOcf" in u: t_link = f"https://www.hkej.com{t_link}"
                         elif "X5o1ke3" in u: t_link = f"https://topick.hket.com{t_link}"
+                        # --- 新增 Now 新聞網址補全 ---
+                        elif "Lk7D530m" in u: t_link = f"https://news.now.com{t_link}"
                     
                     time_struct = getattr(entry, 'published_parsed', None) or getattr(entry, 'updated_parsed', None)
                     dt = datetime.datetime.fromtimestamp(time.mktime(time_struct), HK_TZ) if time_struct else now
                     data.append({'source': config['name'], 'title': t_title, 'link': clean_url(t_link), 'timestamp': dt})
     except: pass
     
-    # 去重與排序
     seen = set()
     final = []
     for d in sorted(data, key=lambda x: x['timestamp'], reverse=True):
@@ -152,7 +150,7 @@ def get_data():
         {"name": "🐯 星島頭條", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316"},
         {"name": "📝 明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
         # 第三排
-        {"name": "🐯 Now 新聞", "type": "now_api", "url": "", "color": "#16A34A"},
+        {"name": "🐯 Now 新聞", "type": "rss", "url": "https://politepaul.com/fd/Lk7D530mgplN.xml", "color": "#16A34A"},
         {"name": "📺 有線新聞", "type": "rss", "url": "https://politepaul.com/fd/7vsPHGi1tzC9.xml", "color": "#A855F7"},
         {"name": "🟢 經濟/TOPick", "type": "rss", "url": "https://politepaul.com/fd/X5o1ke3uTiH3.xml", "color": "#0D9488"},
         {"name": "📜 信報新聞", "type": "rss", "url": "https://politepaul.com/fd/tBTzOcfkQWzF.xml", "color": "#64748B"},
@@ -166,8 +164,8 @@ def get_data():
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as exe:
         futures = {exe.submit(fetch_source, c): c for c in configs}
         for f in concurrent.futures.as_completed(futures):
-            r = f.result()
-            res_map[r['name']] = r['data']
+            res = f.result()
+            res_map[res['name']] = res['data']
     return res_map, configs
 
 # --- 4. UI 介面 ---
@@ -204,5 +202,6 @@ for row in rows:
                     with c2:
                         badge = '<span class="new-badge">NEW!</span>' if is_new_news(item['timestamp']) else ''
                         t_style = 'class="read-text"' if is_sel else ""
-                        row_html = f'''<div class="news-item-row">{badge}<a href="{lk}" target="_blank" {t_style}>{html.escape(item["title"])}</a><div class="news-time">{item["timestamp"].strftime("%H:%M")}</div></div>'''
+                        safe_title = html.escape(item["title"])
+                        row_html = f'''<div class="news-item-row">{badge}<a href="{lk}" target="_blank" {t_style}>{safe_title}</a><div class="news-time">{item["timestamp"].strftime("%H:%M")}</div></div>'''
                         st.markdown(row_html, unsafe_allow_html=True)
