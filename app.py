@@ -41,7 +41,7 @@ st.markdown("""
     header .stDecoration { display: none !important; }
     div[data-testid="stStatusWidget"] { visibility: hidden; }
     div.block-container { min-height: 100vh; padding-top: 2rem; }
-    
+
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
         color: #ef4444;
@@ -56,7 +56,7 @@ st.markdown("""
     .read-text { color: #9ca3af !important; font-weight: normal !important; text-decoration: none !important; }
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
-    
+
     div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] { padding-top: 0px !important; }
     div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] { gap: 0px !important; padding-top: 0px !important; }
 
@@ -206,25 +206,25 @@ def fetch_single_source(config, limit=100):
 def get_all_news_data_parallel():
     RSSHUB = "https://rsshub-production-9dfc.up.railway.app"
     configs = [
-        # 第一排 (禁毒, 政府, RTHK, 商台)
+        # 第一排
         {"name": "💊 禁毒/海關新聞", "type": "rss", "url": "https://news.google.com/rss/search?q=毒品+OR+海關+OR+太空油+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant", "color": "#D946EF"},
         {"name": "🏛 政府新聞稿", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_zh.xml", "color": "#E74C3C"},
         {"name": "📻 RTHK 香港電台", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800"},
         {"name": "🎙️ 商業電台", "type": "rss", "url": "https://politepaul.com/fd/4xPuKWS07tJs.xml", "color": "#334155"},
         
-        # 第二排 (on.cc, HK01, 星島, 明報)
+        # 第二排
         {"name": "💡 on.cc 東網", "type": "rss", "url": f"{RSSHUB}/oncc/zh-hant/news", "color": "#7C3AED"},
         {"name": "📰 HK01 即時", "type": "api_hk01", "url": "https://web-data.api.hk01.com/v2/feed/category/0", "color": "#2563EB"},
         {"name": "🐯 星島頭條", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316"},
         {"name": "📝 明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
         
-        # 第三排 (Now, 有線, 經濟, 信報)
+        # 第三排
         {"name": "🐯 Now 新聞", "type": "now_api", "url": "", "color": "#16A34A"},
         {"name": "📺 有線新聞", "type": "rss", "url": "https://politepaul.com/fd/7vsPHGi1tzC9.xml", "color": "#A855F7"},
         {"name": "🟢 經濟日報 TOPick", "type": "rss", "url": "https://politepaul.com/fd/X5o1ke3uTiH3.xml", "color": "#0D9488"},
         {"name": "📜 信報新聞", "type": "rss", "url": "https://politepaul.com/fd/tBTzOcfkQWzF.xml", "color": "#64748B"},
 
-        # 第四排 (橙, 文匯整合, 點整合, 文匯JSON)
+        # 第四排
         {"name": "🍊 橙新聞(整合)", "type": "rss", "url": ["https://politepaul.com/fd/KZGhqIiTnOCq.xml", "https://politepaul.com/fd/8fzf6zRfoy6H.xml"], "color": "#EA580C"},
         {"name": "📜 文匯報(整合)", "type": "rss", "url": ["https://politepaul.com/fd/C499xnjIBdRm.xml", "https://politepaul.com/fd/6oljXv2E75Pp.xml"], "color": "#BE123C"},
         {"name": "🔵 點新聞(整合)", "type": "rss", "url": ["https://politepaul.com/fd/xbfGvXWovqfk.xml", "https://politepaul.com/fd/59PndwU1mb82.xml"], "color": "#0369A1"},
@@ -261,7 +261,7 @@ news_data_map, source_configs = get_all_news_data_parallel()
 
 @st.dialog("📄 生成結果預覽")
 def show_txt_preview():
-    all_flat = [n for items in news_data_map.values() for n in items]
+    all_flat = [n for items_list in news_data_map.values() for n in items_list]
     targets = [n for n in all_flat if n['link'] in st.session_state.selected_links]
     targets.sort(key=lambda x: x['timestamp'], reverse=True)
     final_text = ""
@@ -279,12 +279,31 @@ if st.session_state.show_preview: show_txt_preview()
 st.title("Tommy Sir 後援會之新聞監察系統")
 rows = [source_configs[i:i + 4] for i in range(0, len(source_configs), 4)]
 
-for item in items:
+for row in rows:
+    cols = st.columns(4)
+    for col, conf in zip(cols, row):
+        with col:
+            # 獲取當前媒體的數據
+            current_items = news_data_map.get(conf['name'], [])
+            with st.container(height=800, border=True):
+                # 標題區
+                st.markdown(f"""
+                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
+                        <div>{conf['name']}</div>
+                        <span class='status-badge'>{len(current_items)} 則</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                if not current_items:
+                    st.caption("暫無資料")
+                else:
+                    for item in current_items:
                         link = item['link']
                         is_selected = link in st.session_state.selected_links
-                        c1, c2 = st.columns([0.15, 0.85])
                         
+                        c1, c2 = st.columns([0.15, 0.85])
                         with c1:
+                            # checkbox 邏輯
                             if st.checkbox("", key=f"chk_{link}", value=is_selected):
                                 st.session_state.selected_links.add(link)
                             else:
@@ -292,15 +311,16 @@ for item in items:
                                     st.session_state.selected_links.remove(link)
                         
                         with c2:
-                            # --- 修正處：先把樣式字串算出來，避免在 f-string 內使用反斜線 ---
-                            badge = '<span class="new-badge">NEW!</span>' if is_new_news(item['timestamp']) else ''
+                            # 組合 HTML，避免 f-string 內的反斜線
+                            is_new = is_new_news(item['timestamp'])
+                            badge = '<span class="new-badge">NEW!</span>' if is_new else ''
                             title_class = 'class="read-text"' if is_selected else ""
+                            safe_title = html.escape(item["title"])
                             
-                            # 組合 HTML
                             item_html = f'''
                                 <div class="news-item-row">
                                     {badge}
-                                    <a href="{link}" target="_blank" {title_class}>{html.escape(item["title"])}</a>
+                                    <a href="{link}" target="_blank" {title_class}>{safe_title}</a>
                                     <div class="news-time">{item["time_str"]}</div>
                                 </div>
                             '''
