@@ -14,7 +14,7 @@ import re
 import html
 import urllib3
 
-# 忽略 SSL 警告 (針對 verify=False)
+# 忽略 SSL 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 設定預設編碼
@@ -37,21 +37,11 @@ st_autorefresh(interval=60 * 1000, limit=None, key="news_autoupdate")
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
-    
-    /* 1. 防止更新時畫面變淡 */
-    .stApp, div[data-testid="stAppViewContainer"] {
-        opacity: 1 !important;
-        transition: none !important;
-    }
-    
-    /* 2. 隱藏頂部載入條與狀態元件 */
+    .stApp, div[data-testid="stAppViewContainer"] { opacity: 1 !important; transition: none !important; }
     header .stDecoration { display: none !important; }
     div[data-testid="stStatusWidget"] { visibility: hidden; }
-
     div.block-container { min-height: 100vh; padding-top: 2rem; }
-    div[data-testid="stAppViewContainer"] { overflow-y: scroll; }
     
-    /* 閃爍特效 */
     @keyframes blinker { 50% { opacity: 0.4; } }
     .new-badge {
         color: #ef4444;
@@ -67,320 +57,183 @@ st.markdown("""
     a { text-decoration: none; color: #334155; font-weight: 600; transition: 0.2s; font-size: 0.95em; line-height: 1.4; display: inline; }
     a:hover { color: #2563eb; }
     
-    /* --- 核心修正：徹底解決固定標題「穿孔」問題 --- */
-    
-    /* 1. 針對滾動區域：強制移除頂部內距，讓標題能完全貼頂 */
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] {
-        padding-top: 0px !important;
-    }
-    
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] {
-        gap: 0px !important;
-        padding-top: 0px !important;
-    }
+    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] { padding-top: 0px !important; }
+    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] > div[data-testid="stVerticalBlock"] { gap: 0px !important; padding-top: 0px !important; }
 
-    /* 2. 針對標題容器：強制置頂、純白背景、高層級 */
     div[data-testid="stVerticalBlock"] > div.element-container:has(.news-source-header) {
         position: sticky !important;
         top: 0 !important;
-        z-index: 99999 !important; /* 極高層級 */
+        z-index: 99999 !important;
         background-color: #ffffff !important;
         margin: 0 !important;
         padding: 0 !important;
         width: 100% !important;
-        /* 視覺遮罩：防止 1px 縫隙穿孔，並加入明顯陰影 */
         box-shadow: 0 4px 10px -2px rgba(0,0,0,0.1); 
         border-bottom: 2px solid #f1f5f9;
-        /* 確保不透明 */
         opacity: 1 !important;
     }
     
-    /* 3. 標題文字區域樣式 */
     .news-source-header { 
         font-size: 1rem; 
         font-weight: bold; 
         color: #1e293b; 
-        padding: 15px 10px; /* 增加一點高度 */
+        padding: 15px 10px;
         margin: 0; 
         display: flex; 
         justify-content: space-between; 
         align-items: center;
-        background-color: #ffffff !important; /* 雙重確保背景純白 */
+        background-color: #ffffff !important;
     }
 
-    /* 4. 針對內容區域：確保層級低於標題 */
-    div.element-container:has(.news-item-row), 
-    div[data-testid="stHorizontalBlock"] {
-        position: relative;
-        z-index: 1 !important;
-        background-color: #ffffff;
-    }
-    
-    .status-badge { font-size: 0.65em; padding: 2px 8px; border-radius: 12px; font-weight: 500; background-color: #f1f5f9; color: #64748b; }
-    
-    .header-btn {
-        background: transparent;
-        border: 1px solid #e2e8f0;
-        color: #64748b;
-        cursor: pointer;
-        font-size: 0.7em;
-        padding: 2px 8px;
-        border-radius: 4px;
-        margin-left: 8px;
-    }
-    
     .news-item-row { padding: 10px 5px; border-bottom: 1px solid #f1f5f9; background-color: white; }
-    .news-item-row:last-child { border-bottom: none; }
     .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
     
-    /* 卡片容器樣式 */
     div[data-testid="stVerticalBlockBorderWrapper"] > div {
         border-top-left-radius: 10px !important;
         border-top-right-radius: 10px !important;
         background-color: white;
-        overflow: hidden; /* 確保圓角內內容不溢出 */
+        overflow: hidden;
         border: 1px solid #e2e8f0;
-    }
-    
-    div[data-testid="column"] { display: flex; align-items: start; }
-    .stCheckbox { margin-bottom: 0px; margin-top: 2px; }
-
-    @media (max-width: 768px) {
-        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalScrollArea"] {
-            height: 550px !important; /* 手機版高度 */
-        }
     }
 </style>
 """, unsafe_allow_html=True)
 
-# 設定時區
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
 UTC_TZ = pytz.timezone('UTC')
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-    'Connection': 'keep-alive'
-}
+# --- 2. 工具功能 ---
 
-# --- 2. 核心功能函式 ---
-
-def chunked(lst, n):
-    return [lst[i:i + n] for i in range(0, len(lst), n)]
-
-def resolve_google_url(url):
-    if "news.google.com" not in url: return url
-    try:
-        r = requests.get(url, allow_redirects=True, timeout=15, headers=HEADERS)
-        if "news.google.com" not in r.url: return r.url
-        soup = BeautifulSoup(r.text, 'html.parser')
-        link_with_data = soup.find('a', attrs={'data-n-url': True})
-        if link_with_data: return link_with_data['data-n-url']
-        return r.url 
-    except: return url
+def clean_url(url: str) -> str:
+    """處理網址：修正信報域名、NowTV參數與去重"""
+    if not url: return ""
+    url = url.strip()
+    
+    # 修正信報連結：將 m.hkej.com 替換為 www.hkej.com 避免 404
+    if "hkej.com" in url:
+        url = url.replace("m.hkej.com", "www.hkej.com")
+        url = url.replace("++", "").strip()
+        
+    if "news.now.com" in url:
+        return urllib.parse.quote(url, safe=":/%?=&")
+    
+    url = url.split('?')[0] 
+    return urllib.parse.quote(url, safe=":/%?=&")
 
 def fetch_full_article(url, summary_fallback=""):
-    """
-    優化版：支援更多網站結構的content extraction
-    """
     try:
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'zh-TW,zh-HK,zh-CN,en-US,en',
-        })
-        r = session.get(url, timeout=20)
+        r = requests.get(url, timeout=12, headers=HEADERS, verify=False)
         r.encoding = r.apparent_encoding
         soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # 移除noise elements
-        noise_selectors = ['script', 'style', 'header', 'footer', 'nav', 'aside', 'iframe',
-            '[class*="ad"]', '[class*="advertisement"]', '[class*="ads"]',
-            '[class*="comment"]', '[class*="sidebar"]', '.nav', '.header', '.footer',
-            '.social-share', '.share-buttons', '.related-posts']
-        for selector in noise_selectors:
-            for tag in soup.select(selector): tag.decompose()
-        
-        # Content selectors (23個pattern)
-        content_selectors = [r'article', r'[role="main"]', r'main',
-            r'[class*="content"]', r'[class*="article"]', r'[class*="news-text"]',
-            r'[class*="post-body"]', r'[class*="story-body"]', r'[id*="content"]',
-            r'[id*="article"]', r'[id*="news"]', '.post-content', '.article-content',
-            '.news-content', '.entry-content', '.td-post-content', '.story-body',
-            '#article', '#content', '#main', '#news-content', '.blog-post', '.single-post']
-        
-        content_area = None
-        for selector in content_selectors:
-            try:
-                if selector.startswith('r'):
-                    pattern = selector[1:]
-                    content_area = soup.find('div', class_=re.compile(pattern, re.I)) or soup.find('article')
-                else:
-                    content_area = soup.select_one(selector)
-                if content_area: break
-            except: continue
-        
-        # Fallback: largest text block
-        if not content_area:
-            paragraphs = soup.find_all('p')
-            if paragraphs:
-                parent_counts = {}
-                for p in paragraphs[:20]:
-                    parent = p.find_parent(['div', 'article', 'section', 'main'])
-                    if parent:
-                        parent_html = str(parent)
-                        parent_counts[parent_html] = parent_counts.get(parent_html, 0) + 1
-                if parent_counts:
-                    best_parent_html = max(parent_counts, key=parent_counts.get)
-                    content_area = BeautifulSoup(best_parent_html, 'html.parser')
-        
-        if content_area:
-            for ad in content_area.find_all(['aside', 'div']):
-                ad_classes = ad.get('class', [])
-                if any(x in ad_classes for x in ['ad', 'ads', 'advertisement', 'comment', 'share']):
-                    ad.decompose()
-            paragraphs = content_area.find_all('p')
-        else:
-            paragraphs = soup.find_all('p')
-        
-        clean_text = []
-        skip_patterns = ['廣告', '廣告贊助', '分享此文', '分享到', '讚好此文章', '按讚', '訂閱', 'advertisement', 'sponsored']
-        
-        for p in paragraphs:
-            text = p.get_text().strip()
-            if len(text) < 30: continue
-            if any(pattern in text.lower() for pattern in skip_patterns): continue
-            clean_text.append(text)
-        
-        if clean_text:
-            return '\n\n'.join(clean_text[:30]), None
-        return summary_fallback, None
-        
-    except Exception as e:
-        return summary_fallback, None
-
-
+        for s in soup(['script', 'style', 'header', 'footer', 'nav', 'aside']): s.decompose()
+        paragraphs = soup.find_all('p')
+        clean_text = [p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 30]
+        return '\n\n'.join(clean_text[:20]) if clean_text else summary_fallback, None
+    except: return summary_fallback, None
 
 def is_new_news(timestamp):
     if not timestamp: return False
-    try:
-        now = datetime.datetime.now(HK_TZ)
-        diff = (now - timestamp.astimezone(HK_TZ)).total_seconds() / 60
-        return 0 <= diff <= 30
-    except: return False
+    now = datetime.datetime.now(HK_TZ)
+    diff = (now - timestamp.astimezone(HK_TZ)).total_seconds() / 60
+    return 0 <= diff <= 30
 
-# --- 3. 抓取邏輯 ---
-
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_google_proxy(site_query, site_name, color, limit=100):
-    query = urllib.parse.quote(site_query)
-    rss_url = f"https://news.google.com/rss/search?q={query}+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
-    try:
-        feed = feedparser.parse(rss_url)
-        news_list = []
-        now = datetime.datetime.now(HK_TZ)
-        for entry in feed.entries: 
-            time_struct = getattr(entry, 'published_parsed', None)
-            if not time_struct: continue
-            dt_obj = datetime.datetime.fromtimestamp(time.mktime(time_struct), UTC_TZ).astimezone(HK_TZ)
-            if (now - dt_obj).total_seconds() > 86400 * 7: continue
-            news_list.append({
-                'source': site_name, 'title': entry.title.rsplit(" - ", 1)[0], 'link': entry.link, 
-                'time_str': dt_obj.strftime('%Y-%m-%d %H:%M'), 'timestamp': dt_obj, 'color': color, 'method': 'Proxy'
-            })
-        return sorted(news_list, key=lambda x: x['timestamp'], reverse=True)[:limit]
-    except: return []
+# --- 3. 抓取主邏輯 ---
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_single_source(config, limit=100):
     data = []
     now = datetime.datetime.now(HK_TZ)
-    try:
-        if config['type'] == 'json_wenweipo':
-             r = requests.get(config['url'], headers=HEADERS, timeout=30, verify=False)
-             items_list = r.json().get('data') or []
-             for item in items_list:
-                 title, link = item.get('title', '').strip(), item.get('url')
-                 date_str = item.get('updated') or item.get('publishTime')
-                 if not date_str: continue
-                 try: dt_obj = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%f%z")
-                 except: dt_obj = datetime.datetime.now(HK_TZ)
-                 if (now - dt_obj.astimezone(HK_TZ)).total_seconds() > 86400 * 7: continue
-                 data.append({
-                    'source': config['name'], 'title': title, 'link': link, 
-                    'time_str': dt_obj.strftime('%Y-%m-%d %H:%M'), 'timestamp': dt_obj, 'color': config['color']
-                 })
-        elif config['type'] == 'now_api':
-             api_url = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1"
-             r = requests.get(api_url, headers=HEADERS, timeout=20)
-             items_list = r.json().get('data') or r.json().get('items') or []
-             for item in items_list:
-                 title = (item.get('newsTitle') or item.get('title') or "").strip()
-                 news_id = item.get('newsId')
-                 link = f"https://news.now.com/home/local/player?newsId={news_id}"
-                 pub_date = item.get('publishDate')
-                 dt_obj = datetime.datetime.fromtimestamp(pub_date/1000, HK_TZ) if pub_date else now
-                 if (now - dt_obj).total_seconds() > 86400 * 7: continue
-                 data.append({
-                    'source': config['name'], 'title': title, 'link': link, 
-                    'time_str': dt_obj.strftime('%Y-%m-%d %H:%M'), 'timestamp': dt_obj, 'color': config['color']
-                 })
-        elif config['type'] == 'api_hk01':
-             r = requests.get(config['url'], headers=HEADERS, params={"limit": 50}, timeout=20)
-             items_list = r.json().get('items', [])
-             for item in items_list:
-                 data_obj = item.get('data', {})
-                 title, link = data_obj.get('title'), data_obj.get('publishUrl')
-                 publish_time = data_obj.get('publishTime')
-                 dt_obj = datetime.datetime.fromtimestamp(publish_time, HK_TZ) if publish_time else now
-                 if (now - dt_obj).total_seconds() > 86400 * 7: continue
-                 data.append({'source': config['name'], 'title': title, 'link': link, 'time_str': dt_obj.strftime('%Y-%m-%d %H:%M'), 'timestamp': dt_obj, 'color': config['color']})
-        elif config['type'] == 'rss':
-            r = requests.get(config['url'], headers=HEADERS, timeout=30, verify=False)
-            feed = feedparser.parse(r.content)
-            for entry in feed.entries:
-                time_struct = getattr(entry, 'updated_parsed', None) or getattr(entry, 'published_parsed', None)
-                if not time_struct: continue
-                dt_obj = datetime.datetime.fromtimestamp(time.mktime(time_struct), UTC_TZ).astimezone(HK_TZ)
-                if config['name'] == "信報即時": dt_obj = dt_obj + datetime.timedelta(days=7)
-                if (now - dt_obj).total_seconds() > 86400 * 7: continue
-                data.append({
-                    'source': config['name'], 'title': entry.title.rsplit(' - ', 1)[0], 'link': entry.link, 
-                    'time_str': dt_obj.strftime('%Y-%m-%d %H:%M'), 'timestamp': dt_obj, 'color': config['color']
-                })
-    except: pass
-    if not data and config.get('backup_query'):
-        data = fetch_google_proxy(config['backup_query'], config['name'], config['color'])
-    return {'name': config['name'], 'data': sorted(data, key=lambda x: x['timestamp'], reverse=True)[:limit]}
-
-@st.cache_data(ttl=60, show_spinner=False)
-def get_all_news_data_parallel(limit=300):
-    RSSHUB_BASE = "https://rsshub-production-9dfc.up.railway.app"
-    ANTIDRUG_RSS = "https://news.google.com/rss/search?q=毒品+OR+保安局+OR+鄧炳強+OR+緝毒+OR+太空油+OR+依託咪酯+OR+禁毒+OR+毒品案+OR+海關+OR+戰時炸彈+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant"
+    urls = config['url'] if isinstance(config['url'], list) else [config['url']]
     
+    try:
+        for target_url in urls:
+            if config['type'] == 'json_wenweipo':
+                r = requests.get(target_url, headers=HEADERS, timeout=25, verify=False)
+                items = r.json().get('data') or []
+                for item in items:
+                    title, link = item.get('title', '').strip(), item.get('url')
+                    date_str = item.get('updated') or item.get('publishTime')
+                    dt_obj = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%f%z") if date_str else now
+                    data.append({'source': config['name'], 'title': title, 'link': clean_url(link), 'time_str': dt_obj.strftime('%m-%d %H:%M'), 'timestamp': dt_obj, 'color': config['color']})
+            
+            elif config['type'] == 'now_api':
+                api_url = "https://newsapi1.now.com/pccw-news-api/api/getNewsListv2?category=119&pageNo=1"
+                r = requests.get(api_url, headers=HEADERS, timeout=20)
+                items = r.json().get('data') or []
+                for item in items:
+                    title = item.get('newsTitle', '').strip()
+                    link = f"https://news.now.com/home/local/player?newsId={item.get('newsId')}"
+                    dt_obj = datetime.datetime.fromtimestamp(item.get('publishDate')/1000, HK_TZ)
+                    data.append({'source': config['name'], 'title': title, 'link': clean_url(link), 'time_str': dt_obj.strftime('%m-%d %H:%M'), 'timestamp': dt_obj, 'color': config['color']})
+            
+            elif config['type'] == 'api_hk01':
+                r = requests.get(target_url, headers=HEADERS, params={"limit": 40}, timeout=20)
+                items = r.json().get('items', [])
+                for item in items:
+                    d = item.get('data', {})
+                    dt_obj = datetime.datetime.fromtimestamp(d.get('publishTime'), HK_TZ)
+                    data.append({'source': config['name'], 'title': d.get('title'), 'link': clean_url(d.get('publishUrl')), 'time_str': dt_obj.strftime('%m-%d %H:%M'), 'timestamp': dt_obj, 'color': config['color']})
+            
+            elif config['type'] == 'rss':
+                r = requests.get(target_url, headers=HEADERS, timeout=25, verify=False)
+                feed = feedparser.parse(r.content)
+                for entry in feed.entries:
+                    title = entry.title.rsplit(' - ', 1)[0]
+                    link = entry.link
+                    # 處理 PolitePol 的相對連結補全
+                    if link.startswith("/"):
+                        if "4xPuKWS07tJs" in target_url: link = f"https://www.881903.com{link}"
+                        elif "7vsPHGi1tzC9" in target_url: link = f"https://www.i-cable.com{link}"
+                        elif "tBTzOcfkQWzF" in target_url: link = f"https://www.hkej.com{link}"
+                        elif "X5o1ke3uTiH3" in target_url: link = f"https://topick.hket.com{link}"
+                        elif "KZGhq" in target_url or "8fzf6zR" in target_url: link = f"https://www.orangenews.hk{link}"
+                        elif "C499xnj" in target_url or "6oljXv" in target_url: link = f"https://www.wenweipo.com{link}"
+                        elif "xbfGvXW" in target_url or "59Pndw" in target_url: link = f"https://www.dotdotnews.com{link}"
+
+                    time_struct = getattr(entry, 'updated_parsed', None) or getattr(entry, 'published_parsed', None)
+                    dt_obj = datetime.datetime.fromtimestamp(time.mktime(time_struct), UTC_TZ).astimezone(HK_TZ) if time_struct else now
+                    data.append({'source': config['name'], 'title': title, 'link': clean_url(link), 'time_str': dt_obj.strftime('%m-%d %H:%M'), 'timestamp': dt_obj, 'color': config['color']})
+    except Exception: pass
+    
+    seen_links = set()
+    unique_data = []
+    for d in sorted(data, key=lambda x: x['timestamp'], reverse=True):
+        if d['link'] not in seen_links:
+            unique_data.append(d)
+            seen_links.add(d['link'])
+    return {'name': config['name'], 'data': unique_data[:limit]}
+
+def get_all_news_data_parallel():
+    RSSHUB = "https://rsshub-production-9dfc.up.railway.app"
     configs = [
-        # 第一排
-        {"name": "禁毒/海關新聞", "type": "rss", "url": ANTIDRUG_RSS, "color": "#D946EF", 'backup_query': 'site:news.google.com 毒品'},
-        {"name": "政府新聞（中文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_zh.xml", "color": "#E74C3C", 'backup_query': 'site:info.gov.hk'},
-        {"name": "政府新聞（英文）", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_en.xml", "color": "#C0392B", 'backup_query': 'site:info.gov.hk'},
-        {"name": "RTHK", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800", 'backup_query': 'site:news.rthk.hk'},
+        # 第一排 (禁毒, 政府, RTHK, 商台)
+        {"name": "💊 禁毒/海關新聞", "type": "rss", "url": "https://news.google.com/rss/search?q=毒品+OR+海關+OR+太空油+when:1d&hl=zh-HK&gl=HK&ceid=HK:zh-Hant", "color": "#D946EF"},
+        {"name": "🏛 政府新聞稿", "type": "rss", "url": "https://www.info.gov.hk/gia/rss/general_zh.xml", "color": "#E74C3C"},
+        {"name": "📻 RTHK 香港電台", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800"},
+        {"name": "🎙️ 商業電台", "type": "rss", "url": "https://politepaul.com/fd/4xPuKWS07tJs.xml", "color": "#334155"},
         
-        # 第二排
-        {"name": "on.cc 東網", "type": "rss", "url": f"{RSSHUB_BASE}/oncc/zh-hant/news", "color": "#7C3AED", 'backup_query': 'site:hk.on.cc'},
-        {"name": "HK01", "type": "api_hk01", "url": "https://web-data.api.hk01.com/v2/feed/category/0", "color": "#2563EB", 'backup_query': 'site:hk01.com'},
-        {"name": "星島即時", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316", 'backup_query': 'site:stheadline.com'},
-        {"name": "Now 新聞（本地）", "type": "now_api", "url": "", "color": "#16A34A", 'backup_query': 'site:news.now.com/home/local'},
+        # 第二排 (on.cc, HK01, 星島, 明報)
+        {"name": "💡 on.cc 東網", "type": "rss", "url": f"{RSSHUB}/oncc/zh-hant/news", "color": "#7C3AED"},
+        {"name": "📰 HK01 即時", "type": "api_hk01", "url": "https://web-data.api.hk01.com/v2/feed/category/0", "color": "#2563EB"},
+        {"name": "🐯 星島頭條", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316"},
+        {"name": "📝 明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
         
-        # 第三排
-        {"name": "明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED", 'backup_query': 'site:news.mingpao.com'},
-        {"name": "i-CABLE 有線", "type": "rss", "url": "https://www.i-cable.com/feed", "color": "#A855F7", 'backup_query': 'site:i-cable.com'},
-        {"name": "信報即時", "type": "rss", "url": f"{RSSHUB_BASE}/hkej/index", "color": "#64748B"},
-        {"name": "文匯報", "type": "json_wenweipo", "url": "https://www.wenweipo.com/channels/wenweipo/hotlist/hours/24/stories.json", "color": "#BE123C"},
+        # 第三排 (Now, 有線, 經濟, 信報)
+        {"name": "🐯 Now 新聞", "type": "now_api", "url": "", "color": "#16A34A"},
+        {"name": "📺 有線新聞", "type": "rss", "url": "https://politepaul.com/fd/7vsPHGi1tzC9.xml", "color": "#A855F7"},
+        {"name": "🟢 經濟日報 TOPick", "type": "rss", "url": "https://politepaul.com/fd/X5o1ke3uTiH3.xml", "color": "#0D9488"},
+        {"name": "📜 信報新聞", "type": "rss", "url": "https://politepaul.com/fd/tBTzOcfkQWzF.xml", "color": "#64748B"},
+
+        # 第四排 (橙, 文匯整合, 點整合, 文匯JSON)
+        {"name": "🍊 橙新聞(整合)", "type": "rss", "url": ["https://politepaul.com/fd/KZGhqIiTnOCq.xml", "https://politepaul.com/fd/8fzf6zRfoy6H.xml"], "color": "#EA580C"},
+        {"name": "📜 文匯報(整合)", "type": "rss", "url": ["https://politepaul.com/fd/C499xnjIBdRm.xml", "https://politepaul.com/fd/6oljXv2E75Pp.xml"], "color": "#BE123C"},
+        {"name": "🔵 點新聞(整合)", "type": "rss", "url": ["https://politepaul.com/fd/xbfGvXWovqfk.xml", "https://politepaul.com/fd/59PndwU1mb82.xml"], "color": "#0369A1"},
+        {"name": "📜 文匯(JSON精選)", "type": "json_wenweipo", "url": "https://www.wenweipo.com/channels/wenweipo/hotlist/hours/24/stories.json", "color": "#BE123C"},
     ]
+    
     results_map = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
-        futures = {executor.submit(fetch_single_source, conf, limit): conf for conf in configs}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+        futures = {executor.submit(fetch_single_source, conf): conf for conf in configs}
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
             results_map[res['name']] = res['data']
@@ -393,80 +246,57 @@ if 'show_preview' not in st.session_state: st.session_state.show_preview = False
 
 with st.sidebar:
     st.header("⚙️ 控制台")
-    if st.button("🔄 立即刷新新聞", use_container_width=True):
+    if st.button("🔄 立即刷新", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-    st.divider()
-    st.metric("已勾選新聞", f"{len(st.session_state.selected_links)} 篇")
-    if st.button("📄 生成 TXT 文本", type="primary", use_container_width=True):
-        if not st.session_state.selected_links:
-            st.warning("請先勾選新聞！")
-        else:
-            st.session_state.show_preview = True
-            st.rerun()
-    if st.button("🗑️ 清空所有選擇", use_container_width=True):
+    st.metric("已勾選", f"{len(st.session_state.selected_links)} 篇")
+    if st.button("📄 生成文本", type="primary", use_container_width=True):
+        st.session_state.show_preview = True
+        st.rerun()
+    if st.button("🗑️ 清空選擇", use_container_width=True):
         st.session_state.selected_links.clear()
         st.rerun()
 
-news_data_map, source_configs = get_all_news_data_parallel(300)
+news_data_map, source_configs = get_all_news_data_parallel()
 
 @st.dialog("📄 生成結果預覽")
 def show_txt_preview():
     all_flat = [n for items in news_data_map.values() for n in items]
     targets = [n for n in all_flat if n['link'] in st.session_state.selected_links]
     targets.sort(key=lambda x: x['timestamp'], reverse=True)
-    
     final_text = ""
     with st.spinner("正在提取全文..."):
         for item in targets:
             content, _ = fetch_full_article(item['link'])
             final_text += f"{item['source']}：{item['title']}\n[{item['time_str']}]\n\n{content}\n\n{item['link']}\n\nEnds\n\n"
-    
-    st.text_area("內容 (可全選複製)：", value=final_text, height=500)
-    if st.button("關閉視窗"):
+    st.text_area("內容：", value=final_text, height=500)
+    if st.button("關閉"):
         st.session_state.show_preview = False
         st.rerun()
 
-if st.session_state.show_preview:
-    show_txt_preview()
+if st.session_state.show_preview: show_txt_preview()
 
 st.title("Tommy Sir 後援會之新聞監察系統")
-rows = chunked(source_configs, 4)
+rows = [source_configs[i:i + 4] for i in range(0, len(source_configs), 4)]
 
 for row in rows:
-    cols = st.columns(len(row))
+    cols = st.columns(4)
     for col, conf in zip(cols, row):
         with col:
             items = news_data_map.get(conf['name'], [])
-            # 增加容器高度至 800px，減少滾動頻率
             with st.container(height=800, border=True):
-                # 標題區 (由 CSS 控制 Sticky 固定，並確保不穿孔)
-                st.markdown(f"""
-                    <div class='news-source-header' style='border-left: 5px solid {conf['color']}'>
-                        <div>{conf['name']}</div>
-                        <span class='status-badge'>{len(items)} 則</span>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-                if not items:
-                    st.caption("暫無資料")
+                st.markdown(f"<div class='news-source-header' style='border-left: 5px solid {conf['color']}'><div>{conf['name']}</div><span class='status-badge'>{len(items)} 則</span></div>", unsafe_allow_html=True)
+                if not items: st.caption("暫無資料")
                 else:
                     for item in items:
                         link = item['link']
-                        is_new = is_new_news(item['timestamp'])
                         is_selected = link in st.session_state.selected_links
-                        
                         c1, c2 = st.columns([0.15, 0.85])
                         with c1:
-                            def update_selection(url=link):
-                                if url in st.session_state.selected_links:
-                                    st.session_state.selected_links.remove(url)
-                                else:
-                                    st.session_state.selected_links.add(url)
-                            st.checkbox("", key=f"chk_{link}", value=is_selected, on_change=update_selection)
+                            if st.checkbox("", key=f"chk_{link}", value=is_selected):
+                                st.session_state.selected_links.add(link)
+                            else:
+                                if link in st.session_state.selected_links: st.session_state.selected_links.remove(link)
                         with c2:
-                            badge = '<span class="new-badge">NEW!</span>' if is_new else ''
-                            title_style = 'class="read-text"' if is_selected else ""
-                            st.markdown(f'<div class="news-item-row">{badge}<a href="{link}" target="_blank" {title_style}>{html.escape(item["title"])}</a><div class="news-time">{item["time_str"]}</div></div>', unsafe_allow_html=True)
-
-
+                            badge = '<span class="new-badge">NEW!</span>' if is_new_news(item['timestamp']) else ''
+                            st.markdown(f'<div class="news-item-row">{badge}<a href="{link}" target="_blank" {"class=\'read-text\'" if is_selected else ""}>{html.escape(item["title"])}</a><div class="news-time">{item["time_str"]}</div></div>', unsafe_allow_html=True)
