@@ -145,7 +145,7 @@ def get_data():
         {"name": "📻 RTHK 電台", "type": "rss", "url": "https://rthk.hk/rthk/news/rss/c_expressnews_clocal.xml", "color": "#FF9800"},
         {"name": "🎙️ 商業電台", "type": "rss", "url": "https://politepaul.com/fd/4xPuKWS07tJs.xml", "color": "#334155"},
         # 第二排
-        {"name": "💡 on.cc 東網", "type": "rss", "url": f"{RSSHUB}/oncc/zh-hant/news", "color": "#7C3AED"},
+        {"name": "💡 on.cc 東網", "type": "rss", "url": "https://politepaul.com/fd/cTsVfG4sKP6c.xml", "color": "#7C3AED"},
         {"name": "📰 HK01 即時", "type": "rss", "url": f"{RSSHUB}/hk01/hot", "color": "#2563EB"},
         {"name": "🐯 星島頭條", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316"},
         {"name": "📝 明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
