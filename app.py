@@ -19,10 +19,10 @@ app = FastAPI()
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-# 儲存新聞的記憶體
+# 儲存新聞與天氣的記憶體
 NEWS_DATA = {}
+WEATHER_CACHE = {"temp": "--", "icon": "", "warning": ""}
 
-# --- 你的工具函數 (保持不變) ---
 def clean_title(raw_title: str) -> str:
     if not raw_title: return ""
     soup = BeautifulSoup(raw_title, "html.parser")
@@ -78,7 +78,29 @@ def fetch_source(config):
             seen.add(d['link'])
     return config['name'], {"color": config['color'], "items": final[:80]}
 
-# --- 媒體設定 (分類成 1 分鐘與 6 分鐘) ---
+# --- 香港天文台天氣抓取 ---
+def fetch_weather():
+    try:
+        url = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc"
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        
+        # 提取溫度與圖示
+        temp = data.get("temperature", {}).get("data", [{}])[0].get("value", "--")
+        icon_list = data.get("icon", [])
+        icon = f"https://www.hko.gov.hk/images/HKOWxIconOutline/pic{icon_list[0]}.png" if icon_list else ""
+        
+        # 提取警告訊息 (如果有的話)
+        warnings = data.get("warningMessage", [])
+        warning_text = " | ".join(warnings) if warnings else ""
+        
+        WEATHER_CACHE["temp"] = temp
+        WEATHER_CACHE["icon"] = icon
+        WEATHER_CACHE["warning"] = warning_text
+    except Exception as e:
+        print("天氣抓取失敗:", e)
+
+# --- 媒體設定 ---
 RSSHUB = "https://rsshub-production-9dfc.up.railway.app"
 FAST_CONFIGS = [
     {"name": "💊 禁毒/海關", "type": "rss", "url": "https://news.google.com/rss/search?q=毒品+OR+海關+when:1d&hl=zh-HK&gl=HK", "color": "#D946EF"},
@@ -113,18 +135,24 @@ def job_slow(): update_news(SLOW_CONFIGS)
 
 @app.on_event("startup")
 def startup_event():
-    # 啟動時先抓一次所有資料
+    # 啟動時預載
     update_news(FAST_CONFIGS + SLOW_CONFIGS)
-    # 設定背景排程
+    fetch_weather()
+    
+    # 設定排程
     scheduler = BackgroundScheduler()
     scheduler.add_job(job_fast, 'interval', minutes=1)
     scheduler.add_job(job_slow, 'interval', minutes=6)
+    scheduler.add_job(fetch_weather, 'interval', minutes=15) # 天氣每 15 分鐘更新一次
     scheduler.start()
 
 @app.get("/api/news")
 def get_news():
-    # 每次前端來要資料，直接給記憶體裡的，0 延遲！
     return NEWS_DATA
+
+@app.get("/api/weather")
+def get_weather():
+    return WEATHER_CACHE
 
 @app.get("/", response_class=HTMLResponse)
 def serve_home():
