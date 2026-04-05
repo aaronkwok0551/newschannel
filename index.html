@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <title>Tommy Sir 後援會之新聞監察系統</title>
+    <style>
+        body { background-color: #f8fafc; font-family: sans-serif; margin: 0; padding: 20px; }
+        .header-title { font-size: 2rem; font-weight: bold; margin-bottom: 20px; color: #1e293b; }
+        
+        @keyframes blinker { 50% { opacity: 0.4; } }
+        .new-badge {
+            color: #ef4444; font-weight: 800; animation: blinker 1.5s ease-in-out infinite;
+            margin-right: 5px; font-size: 0.75em; display: inline-block;
+        }
+        
+        /* 網格排版 (一行 4 個) */
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+        
+        .news-column {
+            background-color: white; border: 1px solid #e2e8f0; border-radius: 10px;
+            height: 800px; overflow-y: auto; overflow-x: hidden;
+        }
+        
+        .news-source-header { 
+            position: sticky; top: 0; z-index: 10;
+            font-size: 1rem; font-weight: bold; color: #1e293b; 
+            padding: 12px 10px; background-color: #ffffff;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 2px solid #f1f5f9; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        .news-item-row { padding: 10px 5px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: flex-start; }
+        .news-item-row input[type="checkbox"] { margin-top: 5px; margin-right: 10px; cursor: pointer; }
+        .news-content { flex: 1; }
+        .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
+        
+        a { text-decoration: none; color: #334155; font-weight: 600; font-size: 0.95em; }
+        a:hover { color: #2563eb; }
+        .read-text { color: #9ca3af !important; }
+    </style>
+</head>
+<body>
+    <div class="header-title">📰 Tommy Sir 後援會之新聞監察系統</div>
+    <div id="dashboard" class="grid-container">
+        </div>
+
+    <script>
+        // 從瀏覽器記憶體讀取已勾選的連結
+        let selectedLinks = JSON.parse(localStorage.getItem('selected_news') || '[]');
+
+        function toggleSelect(link) {
+            let index = selectedLinks.indexOf(link);
+            if (index > -1) {
+                selectedLinks.splice(index, 1); // 取消勾選
+            } else {
+                selectedLinks.push(link); // 勾選
+            }
+            localStorage.setItem('selected_news', JSON.stringify(selectedLinks));
+            renderDashboard(); // 重新渲染畫面以變灰
+        }
+
+        // 格式化時間戳為 HH:MM
+        function formatTime(timestamp) {
+            let d = new Date(timestamp * 1000);
+            return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+        }
+
+        // 判斷是否為 30 分鐘內的新聞
+        function isNew(timestamp) {
+            let now = new Date().getTime() / 1000;
+            return (now - timestamp) <= 1800; // 1800秒 = 30分鐘
+        }
+
+        let globalNewsData = {}; // 暫存從後端拿到的資料
+
+        function renderDashboard() {
+            const dashboard = document.getElementById('dashboard');
+            
+            // 為了不讓畫面閃爍，我們先在記憶體裡組裝好 HTML，最後一次性替換
+            let htmlContent = '';
+            
+            // 定義媒體的顯示順序 (跟你的設定一樣)
+            const order = [
+                "💊 禁毒/海關", "🏛 政府新聞", "📻 RTHK 電台", "🎙️ 商業電台",
+                "💡 on.cc 東網", "📰 HK01 即時", "🐯 星島頭條", "📝 明報即時",
+                "🐯 Now 新聞", "📺 有線新聞", "🟢 經濟/TOPick", "📜 信報新聞",
+                "🍊 橙新聞(合)", "📜 文匯(合)", "🔵 點新聞(合)", "📜 文匯(JSON)"
+            ];
+
+            for (let name of order) {
+                if (!globalNewsData[name]) continue;
+                
+                let source = globalNewsData[name];
+                let color = source.color;
+                let items = source.items;
+                
+                htmlContent += `<div class="news-column">`;
+                htmlContent += `<div class="news-source-header" style="border-left: 5px solid ${color};">
+                                    <div>${name}</div>
+                                    <span style="font-size:0.8em; color:#64748b;">${items.length} 則</span>
+                                </div>`;
+                
+                for (let item of items) {
+                    let isChecked = selectedLinks.includes(item.link);
+                    let checkedAttr = isChecked ? 'checked' : '';
+                    let titleClass = isChecked ? 'read-text' : '';
+                    let badge = isNew(item.timestamp) ? '<span class="new-badge">NEW!</span>' : '';
+                    
+                    htmlContent += `
+                        <div class="news-item-row">
+                            <input type="checkbox" onchange="toggleSelect('${item.link}')" ${checkedAttr}>
+                            <div class="news-content">
+                                ${badge}
+                                <a href="${item.link}" target="_blank" class="${titleClass}">${item.title}</a>
+                                <div class="news-time">${formatTime(item.timestamp)}</div>
+                            </div>
+                        </div>`;
+                }
+                htmlContent += `</div>`;
+            }
+            
+            dashboard.innerHTML = htmlContent;
+        }
+
+        async function fetchNews() {
+            try {
+                // 每 15 秒向後端要一次資料 (後端只回傳記憶體資料，極快！)
+                const res = await fetch('/api/news');
+                const data = await res.json();
+                globalNewsData = data;
+                renderDashboard();
+            } catch (err) {
+                console.error('抓取新聞失敗:', err);
+            }
+        }
+
+        // 網頁開啟時馬上抓一次
+        fetchNews();
+        // 之後每 15 秒自動刷新一次 (無感更新)
+        setInterval(fetchNews, 15000); 
+    </script>
+</body>
+</html>
