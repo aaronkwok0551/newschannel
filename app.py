@@ -249,7 +249,10 @@ async def transcribe_audio(file: UploadFile = File(...)):
         transcript = client.audio.transcriptions.create(
             model="whisper-large-v3", 
             file=audio_io,
-            response_format="text"
+            # 👉 關鍵修改 1：把 "text" 改成 "srt"，這樣就會自帶完美的時分秒時間軸！
+            response_format="srt", 
+            # 👉 關鍵修改 2：把 prompt 改成「純粹的風格示範」，不要用命令句
+            prompt="這是一段繁體中文、廣東話與English夾雜的會議紀錄。示範標點符號：，。！？"
         )
         
         return {"text": transcript}
