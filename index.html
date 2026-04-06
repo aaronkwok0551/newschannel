@@ -6,27 +6,21 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/diff_match_patch/20121119/diff_match_patch.js"></script>
     <style>
         body { background-color: #f8fafc; font-family: sans-serif; margin: 0; padding: 20px; }
-        
-        /* 頂部 Header 樣式：包含標題、時間與天氣 */
         .top-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: white; padding: 15px 25px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
         .header-title { font-size: 1.8rem; font-weight: bold; color: #1e293b; margin: 0; }
         .info-panel { display: flex; align-items: center; gap: 20px; font-size: 1.1rem; color: #475569; font-weight: 500; }
         .weather-panel { display: flex; align-items: center; gap: 8px; }
         .weather-warning { color: #ef4444; font-size: 0.9em; font-weight: bold; animation: blinker 2s infinite; }
-
-        /* 文字比對工具樣式 */
-        .tools-section { margin-bottom: 20px; background: white; padding: 15px 25px; border-radius: 12px; border: 1px solid #e2e8f0; }
+        .tools-section { margin-bottom: 10px; background: white; padding: 15px 25px; border-radius: 12px; border: 1px solid #e2e8f0; }
         .tools-section summary { font-size: 1.1rem; font-weight: bold; color: #3b82f6; cursor: pointer; outline: none; }
         .diff-container { display: flex; gap: 15px; margin-top: 15px; }
         .diff-container textarea { width: 50%; height: 150px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: sans-serif; resize: vertical; }
         .diff-btn { margin-top: 15px; background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-        .diff-btn:hover { background: #1d4ed8; }
+        .diff-btn:hover { opacity: 0.9; }
         #diff-result { margin-top: 15px; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; white-space: pre-wrap; font-size: 1.05rem; line-height: 1.6; }
-
-        /* 新聞網格排版 */
         @keyframes blinker { 50% { opacity: 0.4; } }
         .new-badge { color: #ef4444; font-weight: 800; animation: blinker 1.5s ease-in-out infinite; margin-right: 5px; font-size: 0.75em; display: inline-block; }
-        .grid-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .grid-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 20px;}
         .news-column { background-color: white; border: 1px solid #e2e8f0; border-radius: 10px; height: 800px; overflow-y: auto; overflow-x: hidden; }
         .news-source-header { position: sticky; top: 0; z-index: 10; font-size: 1rem; font-weight: bold; color: #1e293b; padding: 12px 10px; background-color: #ffffff; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f1f5f9; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
         .news-item-row { padding: 10px 5px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: flex-start; }
@@ -43,9 +37,7 @@
     <div class="top-header">
         <h1 class="header-title">📰 Tommy Sir 後援會之新聞監察系統</h1>
         <div class="info-panel">
-            <div class="weather-panel" id="weather-display">
-                加載天氣中...
-            </div>
+            <div class="weather-panel" id="weather-display">加載天氣中...</div>
             <div id="clock-display">--:--:--</div>
         </div>
     </div>
@@ -60,19 +52,57 @@
         <div id="diff-result" style="display: none;"></div>
     </details>
 
+    <details class="tools-section">
+        <summary>✂️ 開啟錄音剪接工具 (快速擷取精華片段為 MP3)</summary>
+        <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 15px;">
+            <div>
+                <label style="font-weight: bold; display: block; margin-bottom: 5px;">1. 選擇錄音檔：</label>
+                <input type="file" id="audio-file" accept="audio/*" style="padding: 5px;">
+            </div>
+            <div style="display: flex; gap: 20px; align-items: center;">
+                <div>
+                    <label style="font-weight: bold;">2. 開始時間：</label>
+                    <input type="number" id="start-min" placeholder="分" style="width: 60px; padding: 5px;" min="0" value="0"> :
+                    <input type="number" id="start-sec" placeholder="秒" style="width: 60px; padding: 5px;" min="0" max="59" value="0">
+                </div>
+                <div>
+                    <label style="font-weight: bold;">3. 結束時間：</label>
+                    <input type="number" id="end-min" placeholder="分" style="width: 60px; padding: 5px;" min="0" value="2"> :
+                    <input type="number" id="end-sec" placeholder="秒" style="width: 60px; padding: 5px;" min="0" max="59" value="0">
+                </div>
+            </div>
+            <div>
+                <button class="diff-btn" id="cut-btn" onclick="processAudio()" style="background: #10b981;">開始剪接並下載 MP3</button>
+                <span id="audio-status" style="margin-left: 15px; color: #64748b; font-size: 0.9em;"></span>
+            </div>
+        </div>
+    </details>
+
+    <details class="tools-section">
+        <summary>🎙️ 開啟 AI 逐字稿生成工具 (支援廣東話、中英夾雜)</summary>
+        <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 15px;">
+            <div>
+                <label style="font-weight: bold; display: block; margin-bottom: 5px;">選擇音訊檔 (限制 25MB 內)：</label>
+                <input type="file" id="transcript-file" accept="audio/*" style="padding: 5px;">
+            </div>
+            <div>
+                <button class="diff-btn" id="transcribe-btn" onclick="generateTranscript()" style="background: #8b5cf6;">開始生成逐字稿</button>
+                <span id="transcript-status" style="margin-left: 15px; color: #64748b; font-size: 0.9em;"></span>
+            </div>
+            <textarea id="transcript-result" placeholder="生成的逐字稿會顯示在這裡..." style="width: 100%; height: 200px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: sans-serif; resize: vertical; display: none;"></textarea>
+        </div>
+    </details>
+
     <div id="dashboard" class="grid-container"></div>
 
     <script>
-        // --- 1. 即時時鐘邏輯 ---
+        // 1. 時鐘
         function updateClock() {
-            const now = new Date();
-            const options = { timeZone: 'Asia/Hong_Kong', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' };
-            document.getElementById('clock-display').innerText = now.toLocaleTimeString('zh-HK', options);
+            document.getElementById('clock-display').innerText = new Date().toLocaleTimeString('zh-HK', { timeZone: 'Asia/Hong_Kong', hour12: false });
         }
-        setInterval(updateClock, 1000);
-        updateClock();
+        setInterval(updateClock, 1000); updateClock();
 
-        // --- 2. 天氣抓取邏輯 ---
+        // 2. 天氣
         async function fetchWeather() {
             try {
                 const res = await fetch('/api/weather');
@@ -82,107 +112,113 @@
                 html += `<span>${data.temp}°C</span>`;
                 if (data.warning) html += `<span class="weather-warning">⚠️ ${data.warning}</span>`;
                 document.getElementById('weather-display').innerHTML = html;
-            } catch (err) { console.error('天氣更新失敗', err); }
+            } catch (err) {}
         }
-        fetchWeather();
-        setInterval(fetchWeather, 5 * 60 * 1000); // 前端每 5 分鐘去後端問一次天氣
+        fetchWeather(); setInterval(fetchWeather, 5 * 60 * 1000);
 
-        // --- 3. 文字比對邏輯 (Diff) ---
+        // 3. 差異比對
         function runDiff() {
-            const text1 = document.getElementById('text-old').value;
-            const text2 = document.getElementById('text-new').value;
-            const resultDiv = document.getElementById('diff-result');
-            
-            if (!text1 && !text2) return;
-            
-            const dmp = new diff_match_patch();
-            const diffs = dmp.diff_main(text1, text2);
-            dmp.diff_cleanupSemantic(diffs); // 讓比對結果更符合人類閱讀習慣
-            
+            const t1 = document.getElementById('text-old').value, t2 = document.getElementById('text-new').value;
+            if (!t1 && !t2) return;
+            const dmp = new diff_match_patch(), diffs = dmp.diff_main(t1, t2);
+            dmp.diff_cleanupSemantic(diffs);
             let html = '';
-            for (let i = 0; i < diffs.length; i++) {
-                let op = diffs[i][0];    // 狀態：插入、刪除或不變
-                let data = diffs[i][1];  // 文字內容
-                let safeText = data.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
-                
-                if (op === 1) { // 新增 (綠色背景)
-                    html += `<ins style="background:#e6ffed; color:#22863a; text-decoration:none; font-weight:bold; padding:2px;">${safeText}</ins>`;
-                } else if (op === -1) { // 刪除 (紅色背景 + 刪除線)
-                    html += `<del style="background:#ffeef0; color:#cb2431; text-decoration:line-through; padding:2px;">${safeText}</del>`;
-                } else { // 相同文字
-                    html += `<span style="color:#334155;">${safeText}</span>`;
-                }
+            for (let [op, data] of diffs) {
+                let safe = data.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+                if (op === 1) html += `<ins style="background:#e6ffed; color:#22863a; text-decoration:none; font-weight:bold; padding:2px;">${safe}</ins>`;
+                else if (op === -1) html += `<del style="background:#ffeef0; color:#cb2431; text-decoration:line-through; padding:2px;">${safe}</del>`;
+                else html += `<span style="color:#334155;">${safe}</span>`;
             }
-            resultDiv.style.display = "block";
-            resultDiv.innerHTML = html;
+            const res = document.getElementById('diff-result');
+            res.style.display = "block"; res.innerHTML = html;
         }
 
-        // --- 4. 新聞 Dashboard 邏輯 (保留你原本的完美設計) ---
+        // 4. 音訊剪接
+        async function processAudio() {
+            const fileInput = document.getElementById('audio-file'), status = document.getElementById('audio-status');
+            if (!fileInput.files[0]) return alert("請選擇音訊檔案！");
+            if (fileInput.files[0].size > 150 * 1024 * 1024) return alert("檔案過大，請上傳小於 150MB 的檔案。");
+            
+            const startSec = parseInt(document.getElementById('start-min').value)*60 + parseInt(document.getElementById('start-sec').value);
+            const endSec = parseInt(document.getElementById('end-min').value)*60 + parseInt(document.getElementById('end-sec').value);
+            if (startSec >= endSec) return alert("結束時間必須大於開始時間！");
+
+            const fd = new FormData();
+            fd.append("file", fileInput.files[0]); fd.append("start_sec", startSec); fd.append("end_sec", endSec);
+            
+            status.innerText = "⏳ 處理中..."; document.getElementById('cut-btn').disabled = true;
+            try {
+                const res = await fetch('/api/cut-audio', { method: 'POST', body: fd });
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob);
+                    a.download = "clipped_audio.mp3"; a.click();
+                    status.innerText = "✅ 完成！";
+                } else {
+                    const err = await res.json();
+                    status.innerText = "❌ 失敗: " + (err.error || "未知錯誤");
+                }
+            } catch (e) { status.innerText = "❌ 連線錯誤"; }
+            finally { document.getElementById('cut-btn').disabled = false; }
+        }
+
+        // 5. AI 逐字稿
+        async function generateTranscript() {
+            const fileInput = document.getElementById('transcript-file'), status = document.getElementById('transcript-status'), result = document.getElementById('transcript-result');
+            if (!fileInput.files[0]) return alert("請選擇音訊檔案！");
+            if (fileInput.files[0].size > 25 * 1024 * 1024) return alert("檔案超過 25MB！請先使用剪接工具。");
+
+            const fd = new FormData(); fd.append("file", fileInput.files[0]);
+            status.innerText = "⏳ AI 正在處理中..."; document.getElementById('transcribe-btn').disabled = true;
+            result.style.display = "none"; result.value = "";
+
+            try {
+                const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (data.error) status.innerText = "❌ 失敗：" + data.error;
+                else {
+                    status.innerText = "✅ 完成！";
+                    result.style.display = "block"; result.value = data.text;
+                }
+            } catch (e) { status.innerText = "❌ 連線錯誤"; }
+            finally { document.getElementById('transcribe-btn').disabled = false; }
+        }
+
+        // 6. 新聞面板
         let selectedLinks = JSON.parse(localStorage.getItem('selected_news') || '[]');
         function toggleSelect(link) {
-            let index = selectedLinks.indexOf(link);
-            if (index > -1) selectedLinks.splice(index, 1);
-            else selectedLinks.push(link);
+            let idx = selectedLinks.indexOf(link);
+            if (idx > -1) selectedLinks.splice(idx, 1); else selectedLinks.push(link);
             localStorage.setItem('selected_news', JSON.stringify(selectedLinks));
             renderDashboard();
         }
-        function formatTime(timestamp) {
-            let d = new Date(timestamp * 1000);
-            return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
-        }
-        function isNew(timestamp) {
-            let now = new Date().getTime() / 1000;
-            return (now - timestamp) <= 1800; // 30 分鐘內
-        }
-
+        
         let globalNewsData = {};
         function renderDashboard() {
-            const dashboard = document.getElementById('dashboard');
-            let htmlContent = '';
-            const order = [
-                "💊 禁毒/海關", "🏛 政府新聞", "📻 RTHK 電台", "🎙️ 商業電台",
-                "💡 on.cc 東網", "📰 HK01 即時", "🐯 星島頭條", "📝 明報即時",
-                "🐯 Now 新聞", "📺 有線新聞", "🟢 經濟/TOPick", "📜 信報新聞",
-                "🍊 橙新聞(合)", "📜 文匯(合)", "🔵 點新聞(合)", "📜 文匯(JSON)"
-            ];
+            const db = document.getElementById('dashboard'); let html = '';
+            const order = ["💊 禁毒/海關", "🏛 政府新聞", "📻 RTHK 電台", "🎙️ 商業電台", "💡 on.cc 東網", "📰 HK01 即時", "🐯 星島頭條", "📝 明報即時", "🐯 Now 新聞", "📺 有線新聞", "🟢 經濟/TOPick", "📜 信報新聞", "🍊 橙新聞(合)", "📜 文匯(合)", "🔵 點新聞(合)", "📜 文匯(JSON)"];
+            
             for (let name of order) {
                 if (!globalNewsData[name]) continue;
-                let source = globalNewsData[name];
-                htmlContent += `<div class="news-column">`;
-                htmlContent += `<div class="news-source-header" style="border-left: 5px solid ${source.color};">
-                                    <div>${name}</div>
-                                    <span style="font-size:0.8em; color:#64748b;">${source.items.length} 則</span>
-                                </div>`;
-                for (let item of source.items) {
-                    let isChecked = selectedLinks.includes(item.link);
-                    let checkedAttr = isChecked ? 'checked' : '';
-                    let titleClass = isChecked ? 'read-text' : '';
-                    let badge = isNew(item.timestamp) ? '<span class="new-badge">NEW!</span>' : '';
-                    htmlContent += `
-                        <div class="news-item-row">
-                            <input type="checkbox" onchange="toggleSelect('${item.link}')" ${checkedAttr}>
-                            <div class="news-content">
-                                ${badge}
-                                <a href="${item.link}" target="_blank" class="${titleClass}">${item.title}</a>
-                                <div class="news-time">${formatTime(item.timestamp)}</div>
-                            </div>
-                        </div>`;
+                let src = globalNewsData[name];
+                html += `<div class="news-column"><div class="news-source-header" style="border-left: 5px solid ${src.color};"><div>${name}</div><span style="font-size:0.8em; color:#64748b;">${src.items.length} 則</span></div>`;
+                for (let item of src.items) {
+                    let isSel = selectedLinks.includes(item.link), badge = (new Date().getTime()/1000 - item.timestamp <= 1800) ? '<span class="new-badge">NEW!</span>' : '';
+                    let timeStr = new Date(item.timestamp*1000).toLocaleTimeString('zh-HK', {hour:'2-digit', minute:'2-digit', hour12:false});
+                    html += `<div class="news-item-row"><input type="checkbox" onchange="toggleSelect('${item.link}')" ${isSel?'checked':''}>
+                             <div class="news-content">${badge}<a href="${item.link}" target="_blank" class="${isSel?'read-text':''}">${item.title}</a><div class="news-time">${timeStr}</div></div></div>`;
                 }
-                htmlContent += `</div>`;
+                html += `</div>`;
             }
-            dashboard.innerHTML = htmlContent;
+            db.innerHTML = html;
         }
 
         async function fetchNews() {
             try {
-                const res = await fetch('/api/news');
-                globalNewsData = await res.json();
-                renderDashboard();
-            } catch (err) { console.error('抓取新聞失敗:', err); }
+                const res = await fetch('/api/news'); globalNewsData = await res.json(); renderDashboard();
+            } catch (e) {}
         }
-
-        fetchNews();
-        setInterval(fetchNews, 15000); // 新聞每 15 秒更新一次畫面
+        fetchNews(); setInterval(fetchNews, 15000);
     </script>
 </body>
 </html>
