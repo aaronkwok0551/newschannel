@@ -5,3 +5,5 @@ requests
 beautifulsoup4
 feedparser
 pytz
+python-multipart
+pydub
