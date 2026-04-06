@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
 from apscheduler.schedulers.background import BackgroundScheduler
 import requests
 import feedparser
@@ -12,12 +12,24 @@ from bs4 import BeautifulSoup
 import re
 import urllib3
 import concurrent.futures
+import io
+import os
+
+# 嘗試載入 pydub，如果 Railway 正在編譯中就不會報錯
+try:
+    from pydub import AudioSegment
+except ImportError:
+    pass
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = FastAPI()
 HK_TZ = pytz.timezone('Asia/Hong_Kong')
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+}
 
 # 儲存新聞與天氣的記憶體
 NEWS_DATA = {}
@@ -52,6 +64,33 @@ def fetch_source(config):
                 for item in r.json().get('data', []):
                     dt = datetime.datetime.strptime(item.get('updated'), "%Y-%m-%dT%H:%M:%S.%f%z")
                     data.append({'title': clean_title(item.get('title')), 'link': clean_url(item.get('url')), 'timestamp': dt.timestamp()})
+            
+            # HK01 API 處理邏輯
+            elif config['type'] == 'json_hk01':
+                r = requests.get(u, headers=HEADERS, timeout=20, verify=False)
+                json_data = r.json()
+                items = json_data.get('items', [])
+                for item in items:
+                    try:
+                        article = item.get('data', item)
+                        t_title = clean_title(article.get('title', ''))
+                        t_link = article.get('publishUrl', article.get('url', ''))
+                        if t_link and t_link.startswith('/'):
+                            t_link = f"https://www.hk01.com{t_link}"
+                        t_link = clean_url(t_link)
+                        
+                        ts = article.get('publishTime', article.get('publish_time'))
+                        if ts:
+                            if len(str(int(ts))) == 13: ts = ts / 1000
+                            dt = datetime.datetime.fromtimestamp(ts, HK_TZ)
+                        else:
+                            dt = now
+                        
+                        if t_title and t_link:
+                            data.append({'title': t_title, 'link': t_link, 'timestamp': dt.timestamp()})
+                    except Exception:
+                        pass
+            
             elif config['type'] == 'rss':
                 r = requests.get(u, headers=HEADERS, timeout=20, verify=False)
                 feed = feedparser.parse(r.content)
@@ -84,16 +123,11 @@ def fetch_weather():
         url = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc"
         r = requests.get(url, timeout=10)
         data = r.json()
-        
-        # 提取溫度與圖示
         temp = data.get("temperature", {}).get("data", [{}])[0].get("value", "--")
         icon_list = data.get("icon", [])
         icon = f"https://www.hko.gov.hk/images/HKOWxIconOutline/pic{icon_list[0]}.png" if icon_list else ""
-        
-        # 提取警告訊息 (如果有的話)
         warnings = data.get("warningMessage", [])
         warning_text = " | ".join(warnings) if warnings else ""
-        
         WEATHER_CACHE["temp"] = temp
         WEATHER_CACHE["icon"] = icon
         WEATHER_CACHE["warning"] = warning_text
@@ -110,7 +144,7 @@ FAST_CONFIGS = [
 ]
 SLOW_CONFIGS = [
     {"name": "💡 on.cc 東網", "type": "rss", "url": "https://politepaul.com/fd/cTsVfG4sKP6c.xml", "color": "#7C3AED"},
-    {"name": "📰 HK01 即時", "type": "rss", "url": f"{RSSHUB}/hk01/hot", "color": "#2563EB"},
+    {"name": "📰 HK01 即時", "type": "json_hk01", "url": "https://web-data.api.hk01.com/v2/feed/category/0", "color": "#2563EB"},
     {"name": "🐯 星島頭條", "type": "rss", "url": "https://www.stheadline.com/rss", "color": "#F97316"},
     {"name": "📝 明報即時", "type": "rss", "url": "https://news.mingpao.com/rss/ins/all.xml", "color": "#7C3AED"},
     {"name": "🐯 Now 新聞", "type": "rss", "url": "https://politepaul.com/fd/Lk7D530mgplN.xml", "color": "#16A34A"},
@@ -135,24 +169,94 @@ def job_slow(): update_news(SLOW_CONFIGS)
 
 @app.on_event("startup")
 def startup_event():
-    # 啟動時預載
     update_news(FAST_CONFIGS + SLOW_CONFIGS)
     fetch_weather()
-    
-    # 設定排程
     scheduler = BackgroundScheduler()
     scheduler.add_job(job_fast, 'interval', minutes=1)
     scheduler.add_job(job_slow, 'interval', minutes=6)
-    scheduler.add_job(fetch_weather, 'interval', minutes=15) # 天氣每 15 分鐘更新一次
+    scheduler.add_job(fetch_weather, 'interval', minutes=15)
     scheduler.start()
 
 @app.get("/api/news")
-def get_news():
-    return NEWS_DATA
+def get_news(): return NEWS_DATA
 
 @app.get("/api/weather")
-def get_weather():
-    return WEATHER_CACHE
+def get_weather(): return WEATHER_CACHE
+
+# --- API：音訊剪輯 (150MB 防護) ---
+@app.post("/api/cut-audio")
+async def cut_audio(
+    file: UploadFile = File(...),
+    start_sec: float = Form(...),
+    end_sec: float = Form(...)
+):
+    try:
+        MAX_SIZE = 150 * 1024 * 1024 
+        audio_bytes = bytearray()
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk: break
+            audio_bytes.extend(chunk)
+            if len(audio_bytes) > MAX_SIZE:
+                raise HTTPException(status_code=413, detail="檔案太大！請上傳小於 150MB 的檔案。")
+        
+        audio_io = io.BytesIO(audio_bytes)
+        audio = AudioSegment.from_file(audio_io)
+        start_ms, end_ms = int(start_sec * 1000), int(end_sec * 1000)
+        clipped_audio = audio[start_ms:end_ms]
+        
+        out_io = io.BytesIO()
+        clipped_audio.export(out_io, format="mp3")
+        out_io.seek(0)
+        
+        safe_filename = file.filename.rsplit('.', 1)[0]
+        return StreamingResponse(
+            out_io, 
+            media_type="audio/mpeg", 
+            headers={"Content-Disposition": f'attachment; filename="clipped_{safe_filename}.mp3"'}
+        )
+    except HTTPException as he:
+        return {"error": he.detail}
+    except Exception as e:
+        return {"error": str(e)}
+
+# --- API：Whisper 逐字稿生成 (使用 Groq) ---
+@app.post("/api/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        return {"error": "伺服器尚未設定 GROQ_API_KEY，無法使用逐字稿功能。"}
+
+    try:
+        MAX_SIZE = 25 * 1024 * 1024 
+        audio_bytes = bytearray()
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk: break
+            audio_bytes.extend(chunk)
+            if len(audio_bytes) > MAX_SIZE:
+                raise HTTPException(status_code=413, detail="檔案超過 25MB 限制！請先使用剪接工具將檔案縮小。")
+        
+        audio_io = io.BytesIO(audio_bytes)
+        audio_io.name = file.filename
+
+        from openai import OpenAI
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.groq.com/openai/v1"
+        )
+        
+        transcript = client.audio.transcriptions.create(
+            model="whisper-large-v3", 
+            file=audio_io,
+            response_format="text"
+        )
+        
+        return {"text": transcript}
+    except HTTPException as he:
+        return {"error": he.detail}
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/", response_class=HTMLResponse)
 def serve_home():
