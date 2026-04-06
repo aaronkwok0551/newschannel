@@ -220,7 +220,7 @@ async def cut_audio(
     except Exception as e:
         return {"error": str(e)}
 
-# --- API：Whisper 逐字稿生成 (使用 Groq) ---
+# --- API：Whisper 逐字稿生成 (使用 Groq + 手動時間軸) ---
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     api_key = os.environ.get("GROQ_API_KEY")
@@ -246,21 +246,45 @@ async def transcribe_audio(file: UploadFile = File(...)):
             base_url="https://api.groq.com/openai/v1"
         )
         
+        # 1. 改向 Groq 請求包含時間戳記的 verbose_json 格式
         transcript = client.audio.transcriptions.create(
             model="whisper-large-v3", 
             file=audio_io,
-            # 👉 關鍵修改 1：把 "text" 改成 "srt"，這樣就會自帶完美的時分秒時間軸！
-            response_format="srt", 
-            # 👉 關鍵修改 2：把 prompt 改成「純粹的風格示範」，不要用命令句
+            response_format="verbose_json",
             prompt="這是一段繁體中文、廣東話與English夾雜的會議紀錄。示範標點符號：，。！？"
         )
         
-        return {"text": transcript}
+        # 2. 我們自己在後端幫它加上漂亮的時間軸 [分:秒]
+        result_text = ""
+        segments = getattr(transcript, 'segments', [])
+        
+        # 防呆機制：確保能正確讀取資料
+        if not segments and isinstance(transcript, dict):
+            segments = transcript.get('segments', [])
+            
+        if segments:
+            for seg in segments:
+                # 抓取每一句話的開始、結束時間與文字
+                start = getattr(seg, 'start', seg.get('start', 0) if isinstance(seg, dict) else 0)
+                end = getattr(seg, 'end', seg.get('end', 0) if isinstance(seg, dict) else 0)
+                text = getattr(seg, 'text', seg.get('text', '') if isinstance(seg, dict) else '').strip()
+                
+                # 計算分鐘與秒數
+                start_m, start_s = divmod(int(start), 60)
+                end_m, end_s = divmod(int(end), 60)
+                
+                # 組裝成 [00:00 - 00:05] 這是一段話... 的格式
+                result_text += f"[{start_m:02d}:{start_s:02d} - {end_m:02d}:{end_s:02d}] {text}\n"
+        else:
+            # 萬一沒有抓到時間段，至少回傳純文字
+            result_text = getattr(transcript, 'text', str(transcript))
+        
+        return {"text": result_text}
+
     except HTTPException as he:
         return {"error": he.detail}
     except Exception as e:
         return {"error": str(e)}
-
 @app.get("/", response_class=HTMLResponse)
 def serve_home():
     with open("index.html", "r", encoding="utf-8") as f:
