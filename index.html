@@ -11,6 +11,8 @@
         .info-panel { display: flex; align-items: center; gap: 20px; font-size: 1.1rem; color: #475569; font-weight: 500; }
         .weather-panel { display: flex; align-items: center; gap: 8px; }
         .weather-warning { color: #ef4444; font-size: 0.9em; font-weight: bold; animation: blinker 2s infinite; }
+        
+        /* 工具區塊樣式 */
         .tools-section { margin-bottom: 10px; background: white; padding: 15px 25px; border-radius: 12px; border: 1px solid #e2e8f0; }
         .tools-section summary { font-size: 1.1rem; font-weight: bold; color: #3b82f6; cursor: pointer; outline: none; }
         .diff-container { display: flex; gap: 15px; margin-top: 15px; }
@@ -18,10 +20,21 @@
         .diff-btn { margin-top: 15px; background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .diff-btn:hover { opacity: 0.9; }
         #diff-result { margin-top: 15px; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; white-space: pre-wrap; font-size: 1.05rem; line-height: 1.6; }
+        
         @keyframes blinker { 50% { opacity: 0.4; } }
         .new-badge { color: #ef4444; font-weight: 800; animation: blinker 1.5s ease-in-out infinite; margin-right: 5px; font-size: 0.75em; display: inline-block; }
-        .grid-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 20px;}
-        .news-column { background-color: white; border: 1px solid #e2e8f0; border-radius: 10px; height: 800px; overflow-y: auto; overflow-x: hidden; }
+        
+        /* 滾動優化：加大間距 (gap: 25px) 創造安全滾動區 */
+        .grid-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 25px; margin-top: 20px;}
+        
+        /* 滾動優化：高度降至 500px，並加入 overscroll-behavior 避免滾動暴衝 */
+        .news-column { 
+            background-color: white; border: 1px solid #e2e8f0; border-radius: 10px; 
+            height: 500px; 
+            overflow-y: auto; overflow-x: hidden; 
+            overscroll-behavior: contain; 
+        }
+        
         .news-source-header { position: sticky; top: 0; z-index: 10; font-size: 1rem; font-weight: bold; color: #1e293b; padding: 12px 10px; background-color: #ffffff; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f1f5f9; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
         .news-item-row { padding: 10px 5px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: flex-start; }
         .news-item-row input[type="checkbox"] { margin-top: 5px; margin-right: 10px; cursor: pointer; }
@@ -53,24 +66,28 @@
     </details>
 
     <details class="tools-section">
-        <summary>✂️ 開啟錄音剪接工具 (快速擷取精華片段為 MP3)</summary>
+        <summary>✂️ 開啟錄音剪接工具 (邊聽邊選，快速擷取精華 MP3)</summary>
         <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 15px;">
             <div>
                 <label style="font-weight: bold; display: block; margin-bottom: 5px;">1. 選擇錄音檔：</label>
-                <input type="file" id="audio-file" accept="audio/*" style="padding: 5px;">
+                <input type="file" id="audio-file" accept="audio/*" style="padding: 5px;" onchange="loadAudioPlayer(this)">
             </div>
-            <div style="display: flex; gap: 20px; align-items: center;">
-                <div>
-                    <label style="font-weight: bold;">2. 開始時間：</label>
-                    <input type="number" id="start-min" placeholder="分" style="width: 60px; padding: 5px;" min="0" value="0"> :
-                    <input type="number" id="start-sec" placeholder="秒" style="width: 60px; padding: 5px;" min="0" max="59" value="0">
-                </div>
-                <div>
-                    <label style="font-weight: bold;">3. 結束時間：</label>
-                    <input type="number" id="end-min" placeholder="分" style="width: 60px; padding: 5px;" min="0" value="2"> :
-                    <input type="number" id="end-sec" placeholder="秒" style="width: 60px; padding: 5px;" min="0" max="59" value="0">
+            
+            <div id="audio-player-container" style="display: none; background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1;">
+                <label style="font-weight: bold; display: block; margin-bottom: 10px; color: #334155;">🎧 邊聽邊選：</label>
+                <audio id="audio-preview" controls style="width: 100%; margin-bottom: 15px;"></audio>
+                <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                    <div style="background: white; padding: 10px; border-radius: 5px; border: 1px solid #e2e8f0; display: flex; gap: 10px; align-items: center;">
+                        <button onclick="setStartTime()" style="background: #3b82f6; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-weight: bold;">🚩 設為開始</button>
+                        <input type="number" id="start-time-input" step="0.1" value="0" style="width: 70px; padding: 5px;"> 秒
+                    </div>
+                    <div style="background: white; padding: 10px; border-radius: 5px; border: 1px solid #e2e8f0; display: flex; gap: 10px; align-items: center;">
+                        <button onclick="setEndTime()" style="background: #ef4444; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-weight: bold;">🏁 設為結束</button>
+                        <input type="number" id="end-time-input" step="0.1" value="0" style="width: 70px; padding: 5px;"> 秒
+                    </div>
                 </div>
             </div>
+
             <div>
                 <button class="diff-btn" id="cut-btn" onclick="processAudio()" style="background: #10b981;">開始剪接並下載 MP3</button>
                 <span id="audio-status" style="margin-left: 15px; color: #64748b; font-size: 0.9em;"></span>
@@ -133,14 +150,31 @@
             res.style.display = "block"; res.innerHTML = html;
         }
 
-        // 4. 音訊剪接
+        // 4. 音訊剪接 (互動播放版)
+        function loadAudioPlayer(input) {
+            const file = input.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                const player = document.getElementById('audio-preview');
+                player.src = url;
+                document.getElementById('audio-player-container').style.display = 'block';
+                player.onloadedmetadata = function() {
+                    document.getElementById('end-time-input').value = player.duration.toFixed(1);
+                };
+            }
+        }
+        function setStartTime() { document.getElementById('start-time-input').value = document.getElementById('audio-preview').currentTime.toFixed(1); }
+        function setEndTime() { document.getElementById('end-time-input').value = document.getElementById('audio-preview').currentTime.toFixed(1); }
+
         async function processAudio() {
-            const fileInput = document.getElementById('audio-file'), status = document.getElementById('audio-status');
-            if (!fileInput.files[0]) return alert("請選擇音訊檔案！");
+            const fileInput = document.getElementById('audio-file');
+            const status = document.getElementById('audio-status');
+            
+            if (!fileInput.files[0]) return alert("請先選擇音訊檔案！");
             if (fileInput.files[0].size > 150 * 1024 * 1024) return alert("檔案過大，請上傳小於 150MB 的檔案。");
             
-            const startSec = parseInt(document.getElementById('start-min').value)*60 + parseInt(document.getElementById('start-sec').value);
-            const endSec = parseInt(document.getElementById('end-min').value)*60 + parseInt(document.getElementById('end-sec').value);
+            const startSec = parseFloat(document.getElementById('start-time-input').value);
+            const endSec = parseFloat(document.getElementById('end-time-input').value);
             if (startSec >= endSec) return alert("結束時間必須大於開始時間！");
 
             const fd = new FormData();
@@ -152,7 +186,13 @@
                 if (res.ok) {
                     const blob = await res.blob();
                     const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob);
-                    a.download = "clipped_audio.mp3"; a.click();
+                    
+                    const disposition = res.headers.get('Content-Disposition');
+                    let filename = "clipped_audio.mp3";
+                    if (disposition && disposition.indexOf('filename=') !== -1) {
+                        filename = disposition.split('filename=')[1].replace(/"/g, "");
+                    }
+                    a.download = filename; a.click();
                     status.innerText = "✅ 完成！";
                 } else {
                     const err = await res.json();
