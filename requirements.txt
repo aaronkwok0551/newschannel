@@ -8,3 +8,4 @@ pytz
 python-multipart
 pydub
 openai
+yt-dlp
