@@ -14,10 +14,12 @@ import urllib3
 import concurrent.futures
 import io
 import os
+import uuid  # 新增：用於生成不重複的暫存檔名
 
-# 嘗試載入 pydub，如果 Railway 正在編譯中就不會報錯
+# 嘗試載入 pydub 與 yt_dlp，如果正在編譯中就不會報錯
 try:
     from pydub import AudioSegment
+    import yt_dlp  # 新增：用於網址音訊提取
 except ImportError:
     pass
 
@@ -183,6 +185,50 @@ def get_news(): return NEWS_DATA
 @app.get("/api/weather")
 def get_weather(): return WEATHER_CACHE
 
+# --- API：從網址提取音訊 (新增 yt-dlp 功能) ---
+@app.post("/api/extract-audio")
+def extract_audio_from_url(url: str = Form(...)):
+    if not url:
+        return {"error": "請提供有效的網址"}
+        
+    temp_filename = f"temp_{uuid.uuid4().hex}"
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': f'{temp_filename}.%(ext)s',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': True,
+        'no_warnings': True
+    }
+
+    try:
+        # 注意：使用一般 def (非 async def) 會讓 FastAPI 在背景執行緒中運行此處，避免阻斷其他 API
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        
+        final_file = f"{temp_filename}.mp3"
+        
+        # 讀入記憶體，避免檔案一直卡在伺服器上
+        with open(final_file, "rb") as f:
+            audio_data = f.read()
+            
+        # 實體檔案用完即丟，保持乾淨
+        if os.path.exists(final_file):
+            os.remove(final_file)
+            
+        out_io = io.BytesIO(audio_data)
+        return StreamingResponse(
+            out_io, 
+            media_type="audio/mpeg", 
+            headers={"Content-Disposition": 'attachment; filename="extracted_audio.mp3"'}
+        )
+    except Exception as e:
+        return {"error": f"提取失敗：{str(e)}"}
+
 # --- API：音訊剪輯 (150MB 防護) ---
 @app.post("/api/cut-audio")
 async def cut_audio(
@@ -285,6 +331,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         return {"error": he.detail}
     except Exception as e:
         return {"error": str(e)}
+
 @app.get("/", response_class=HTMLResponse)
 def serve_home():
     with open("index.html", "r", encoding="utf-8") as f:
