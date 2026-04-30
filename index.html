@@ -1,264 +1,96 @@
-<!DOCTYPE html>
-<html lang="zh-HK">
-<head>
-    <meta charset="UTF-8">
-    <title>Tommy Sir 後援會之新聞監察系統</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/diff_match_patch/20121119/diff_match_patch.js"></script>
-    <style>
-        body { background-color: #f8fafc; font-family: sans-serif; margin: 0; padding: 20px; }
-        .top-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: white; padding: 15px 25px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-        .header-title { font-size: 1.8rem; font-weight: bold; color: #1e293b; margin: 0; }
-        .info-panel { display: flex; align-items: center; gap: 20px; font-size: 1.1rem; color: #475569; font-weight: 500; }
-        .weather-panel { display: flex; align-items: center; gap: 8px; }
-        .weather-warning { color: #ef4444; font-size: 0.9em; font-weight: bold; animation: blinker 2s infinite; }
-        
-        /* 工具區塊樣式 */
-        .tools-section { margin-bottom: 10px; background: white; padding: 15px 25px; border-radius: 12px; border: 1px solid #e2e8f0; }
-        .tools-section summary { font-size: 1.1rem; font-weight: bold; color: #3b82f6; cursor: pointer; outline: none; }
-        .diff-container { display: flex; gap: 15px; margin-top: 15px; }
-        .diff-container textarea { width: 50%; height: 150px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: sans-serif; resize: vertical; }
-        .diff-btn { margin-top: 15px; background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-        .diff-btn:hover { opacity: 0.9; }
-        #diff-result { margin-top: 15px; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; white-space: pre-wrap; font-size: 1.05rem; line-height: 1.6; }
-        
-        @keyframes blinker { 50% { opacity: 0.4; } }
-        .new-badge { color: #ef4444; font-weight: 800; animation: blinker 1.5s ease-in-out infinite; margin-right: 5px; font-size: 0.75em; display: inline-block; }
-        
-        /* 滾動優化：加大間距 (gap: 25px) 創造安全滾動區 */
-        .grid-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 25px; margin-top: 20px;}
-        
-        /* 滾動優化：高度降至 500px，並加入 overscroll-behavior 避免滾動暴衝 */
-        .news-column { 
-            background-color: white; border: 1px solid #e2e8f0; border-radius: 10px; 
-            height: 500px; 
-            overflow-y: auto; overflow-x: hidden; 
-            overscroll-behavior: contain; 
-        }
-        
-        .news-source-header { position: sticky; top: 0; z-index: 10; font-size: 1rem; font-weight: bold; color: #1e293b; padding: 12px 10px; background-color: #ffffff; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f1f5f9; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-        .news-item-row { padding: 10px 5px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: flex-start; }
-        .news-item-row input[type="checkbox"] { margin-top: 5px; margin-right: 10px; cursor: pointer; }
-        .news-content { flex: 1; }
-        .news-time { font-size: 0.8em; color: #94a3b8; margin-top: 4px; display: block; }
-        a { text-decoration: none; color: #334155; font-weight: 600; font-size: 0.95em; }
-        a:hover { color: #2563eb; }
-        .read-text { color: #9ca3af !important; }
-    </style>
-</head>
-<body>
-
-    <div class="top-header">
-        <h1 class="header-title">📰 Tommy Sir 後援會之新聞監察系統</h1>
-        <div class="info-panel">
-            <div class="weather-panel" id="weather-display">加載天氣中...</div>
-            <div id="clock-display">--:--:--</div>
-        </div>
+<!-- 🔗 網址轉 MP3 提取器區塊 -->
+<div style="background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px;">
+    <h3 style="margin-top: 0; color: #1e293b; display: flex; align-items: center; gap: 8px;">
+        🔗 網址提取 MP3 
+    </h3>
+    <p style="color: #64748b; font-size: 14px; margin-bottom: 15px;">
+        支援 Now新聞、YouTube 等網址。伺服器將在雲端自動擷取並轉檔，為您避開公司網路限制。
+    </p>
+    
+    <div style="display: flex; gap: 10px;">
+        <input type="text" id="extract-url" placeholder="例如：https://news.now.com/home/local/player?newsId=..." 
+               style="flex: 1; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; outline: none;">
+        <button id="extract-btn" 
+                style="padding: 12px 24px; background: #0284c7; color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer; transition: background 0.2s;">
+            📥 提取並下載
+        </button>
     </div>
+    
+    <!-- 狀態提示文字 -->
+    <div id="extract-status" style="margin-top: 12px; font-size: 14px; font-weight: 500;"></div>
+</div>
 
-    <details class="tools-section">
-        <summary>📝 開啟文字比對工具 (支援雙語本、草稿比對)</summary>
-        <div class="diff-container">
-            <textarea id="text-old" placeholder="在此貼上【原文】..."></textarea>
-            <textarea id="text-new" placeholder="在此貼上【修改後的文字】..."></textarea>
-        </div>
-        <button class="diff-btn" onclick="runDiff()">開始比對差異</button>
-        <div id="diff-result" style="display: none;"></div>
-    </details>
+<!-- ⚙️ 處理下載邏輯的 JavaScript -->
+<script>
+document.getElementById('extract-btn').addEventListener('click', async () => {
+    const urlInput = document.getElementById('extract-url').value.trim();
+    const statusDiv = document.getElementById('extract-status');
+    const btn = document.getElementById('extract-btn');
 
-    <details class="tools-section">
-        <summary>✂️ 開啟錄音剪接工具 (邊聽邊選，快速擷取精華 MP3)</summary>
-        <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 15px;">
-            <div>
-                <label style="font-weight: bold; display: block; margin-bottom: 5px;">1. 選擇錄音檔：</label>
-                <input type="file" id="audio-file" accept="audio/*" style="padding: 5px;" onchange="loadAudioPlayer(this)">
-            </div>
-            
-            <div id="audio-player-container" style="display: none; background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px solid #cbd5e1;">
-                <label style="font-weight: bold; display: block; margin-bottom: 10px; color: #334155;">🎧 邊聽邊選：</label>
-                <audio id="audio-preview" controls style="width: 100%; margin-bottom: 15px;"></audio>
-                <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
-                    <div style="background: white; padding: 10px; border-radius: 5px; border: 1px solid #e2e8f0; display: flex; gap: 10px; align-items: center;">
-                        <button onclick="setStartTime()" style="background: #3b82f6; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-weight: bold;">🚩 設為開始</button>
-                        <input type="number" id="start-time-input" step="0.1" value="0" style="width: 70px; padding: 5px;"> 秒
-                    </div>
-                    <div style="background: white; padding: 10px; border-radius: 5px; border: 1px solid #e2e8f0; display: flex; gap: 10px; align-items: center;">
-                        <button onclick="setEndTime()" style="background: #ef4444; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-weight: bold;">🏁 設為結束</button>
-                        <input type="number" id="end-time-input" step="0.1" value="0" style="width: 70px; padding: 5px;"> 秒
-                    </div>
-                </div>
-            </div>
+    // 防呆：檢查是否為空
+    if (!urlInput) {
+        statusDiv.innerHTML = '<span style="color: #ef4444;">❌ 請先輸入網址！</span>';
+        return;
+    }
 
-            <div>
-                <button class="diff-btn" id="cut-btn" onclick="processAudio()" style="background: #10b981;">開始剪接並下載 MP3</button>
-                <span id="audio-status" style="margin-left: 15px; color: #64748b; font-size: 0.9em;"></span>
-            </div>
-        </div>
-    </details>
+    // 1. 鎖定按鈕，顯示處理中（這很重要，因為雲端下載需要時間）
+    btn.disabled = true;
+    btn.style.background = '#94a3b8';
+    btn.innerText = '⏳ 處理中...';
+    statusDiv.innerHTML = '<span style="color: #f59e0b;">⏳ 伺服器正在雲端下載並轉碼成 MP3，這可能需要 1-2 分鐘，請勿關閉網頁...</span>';
 
-    <details class="tools-section">
-        <summary>🎙️ 開啟 AI 逐字稿生成工具 (支援廣東話、中英夾雜)</summary>
-        <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 15px;">
-            <div>
-                <label style="font-weight: bold; display: block; margin-bottom: 5px;">選擇音訊檔 (限制 25MB 內)：</label>
-                <input type="file" id="transcript-file" accept="audio/*" style="padding: 5px;">
-            </div>
-            <div>
-                <button class="diff-btn" id="transcribe-btn" onclick="generateTranscript()" style="background: #8b5cf6;">開始生成逐字稿</button>
-                <span id="transcript-status" style="margin-left: 15px; color: #64748b; font-size: 0.9em;"></span>
-            </div>
-            <textarea id="transcript-result" placeholder="生成的逐字稿會顯示在這裡..." style="width: 100%; height: 200px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: sans-serif; resize: vertical; display: none;"></textarea>
-        </div>
-    </details>
+    try {
+        // 2. 打包資料發送給我們剛寫好的 FastAPI 後端
+        const formData = new FormData();
+        formData.append('url', urlInput);
 
-    <div id="dashboard" class="grid-container"></div>
+        const response = await fetch('/api/extract-audio', {
+            method: 'POST',
+            body: formData
+        });
 
-    <script>
-        // 1. 時鐘
-        function updateClock() {
-            document.getElementById('clock-display').innerText = new Date().toLocaleTimeString('zh-HK', { timeZone: 'Asia/Hong_Kong', hour12: false });
-        }
-        setInterval(updateClock, 1000); updateClock();
-
-        // 2. 天氣
-        async function fetchWeather() {
-            try {
-                const res = await fetch('/api/weather');
-                const data = await res.json();
-                let html = '';
-                if (data.icon) html += `<img src="${data.icon}" style="height: 30px;"> `;
-                html += `<span>${data.temp}°C</span>`;
-                if (data.warning) html += `<span class="weather-warning">⚠️ ${data.warning}</span>`;
-                document.getElementById('weather-display').innerHTML = html;
-            } catch (err) {}
-        }
-        fetchWeather(); setInterval(fetchWeather, 5 * 60 * 1000);
-
-        // 3. 差異比對
-        function runDiff() {
-            const t1 = document.getElementById('text-old').value, t2 = document.getElementById('text-new').value;
-            if (!t1 && !t2) return;
-            const dmp = new diff_match_patch(), diffs = dmp.diff_main(t1, t2);
-            dmp.diff_cleanupSemantic(diffs);
-            let html = '';
-            for (let [op, data] of diffs) {
-                let safe = data.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
-                if (op === 1) html += `<ins style="background:#e6ffed; color:#22863a; text-decoration:none; font-weight:bold; padding:2px;">${safe}</ins>`;
-                else if (op === -1) html += `<del style="background:#ffeef0; color:#cb2431; text-decoration:line-through; padding:2px;">${safe}</del>`;
-                else html += `<span style="color:#334155;">${safe}</span>`;
-            }
-            const res = document.getElementById('diff-result');
-            res.style.display = "block"; res.innerHTML = html;
+        // 檢查後端是否報錯
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || '伺服器發生未知錯誤');
         }
 
-        // 4. 音訊剪接 (互動播放版)
-        function loadAudioPlayer(input) {
-            const file = input.files[0];
-            if (file) {
-                const url = URL.createObjectURL(file);
-                const player = document.getElementById('audio-preview');
-                player.src = url;
-                document.getElementById('audio-player-container').style.display = 'block';
-                player.onloadedmetadata = function() {
-                    document.getElementById('end-time-input').value = player.duration.toFixed(1);
-                };
-            }
-        }
-        function setStartTime() { document.getElementById('start-time-input').value = document.getElementById('audio-preview').currentTime.toFixed(1); }
-        function setEndTime() { document.getElementById('end-time-input').value = document.getElementById('audio-preview').currentTime.toFixed(1); }
-
-        async function processAudio() {
-            const fileInput = document.getElementById('audio-file');
-            const status = document.getElementById('audio-status');
-            
-            if (!fileInput.files[0]) return alert("請先選擇音訊檔案！");
-            if (fileInput.files[0].size > 150 * 1024 * 1024) return alert("檔案過大，請上傳小於 150MB 的檔案。");
-            
-            const startSec = parseFloat(document.getElementById('start-time-input').value);
-            const endSec = parseFloat(document.getElementById('end-time-input').value);
-            if (startSec >= endSec) return alert("結束時間必須大於開始時間！");
-
-            const fd = new FormData();
-            fd.append("file", fileInput.files[0]); fd.append("start_sec", startSec); fd.append("end_sec", endSec);
-            
-            status.innerText = "⏳ 處理中..."; document.getElementById('cut-btn').disabled = true;
-            try {
-                const res = await fetch('/api/cut-audio', { method: 'POST', body: fd });
-                if (res.ok) {
-                    const blob = await res.blob();
-                    const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob);
-                    
-                    const disposition = res.headers.get('Content-Disposition');
-                    let filename = "clipped_audio.mp3";
-                    if (disposition && disposition.indexOf('filename=') !== -1) {
-                        filename = disposition.split('filename=')[1].replace(/"/g, "");
-                    }
-                    a.download = filename; a.click();
-                    status.innerText = "✅ 完成！";
-                } else {
-                    const err = await res.json();
-                    status.innerText = "❌ 失敗: " + (err.error || "未知錯誤");
-                }
-            } catch (e) { status.innerText = "❌ 連線錯誤"; }
-            finally { document.getElementById('cut-btn').disabled = false; }
-        }
-
-        // 5. AI 逐字稿
-        async function generateTranscript() {
-            const fileInput = document.getElementById('transcript-file'), status = document.getElementById('transcript-status'), result = document.getElementById('transcript-result');
-            if (!fileInput.files[0]) return alert("請選擇音訊檔案！");
-            if (fileInput.files[0].size > 25 * 1024 * 1024) return alert("檔案超過 25MB！請先使用剪接工具。");
-
-            const fd = new FormData(); fd.append("file", fileInput.files[0]);
-            status.innerText = "⏳ AI 正在處理中..."; document.getElementById('transcribe-btn').disabled = true;
-            result.style.display = "none"; result.value = "";
-
-            try {
-                const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
-                const data = await res.json();
-                if (data.error) status.innerText = "❌ 失敗：" + data.error;
-                else {
-                    status.innerText = "✅ 完成！";
-                    result.style.display = "block"; result.value = data.text;
-                }
-            } catch (e) { status.innerText = "❌ 連線錯誤"; }
-            finally { document.getElementById('transcribe-btn').disabled = false; }
-        }
-
-        // 6. 新聞面板
-        let selectedLinks = JSON.parse(localStorage.getItem('selected_news') || '[]');
-        function toggleSelect(link) {
-            let idx = selectedLinks.indexOf(link);
-            if (idx > -1) selectedLinks.splice(idx, 1); else selectedLinks.push(link);
-            localStorage.setItem('selected_news', JSON.stringify(selectedLinks));
-            renderDashboard();
-        }
+        // 3. 接收轉好的 MP3 檔案並觸發瀏覽器下載
+        const blob = await response.blob();
         
-        let globalNewsData = {};
-        function renderDashboard() {
-            const db = document.getElementById('dashboard'); let html = '';
-            const order = ["💊 禁毒/海關", "🏛 政府新聞", "📻 RTHK 電台", "🎙️ 商業電台", "💡 on.cc 東網", "📰 HK01 即時", "🐯 星島頭條", "📝 明報即時", "🐯 Now 新聞", "📺 有線新聞", "🟢 經濟/TOPick", "📜 信報新聞", "🍊 橙新聞(合)", "📜 文匯(合)", "🔵 點新聞(合)", "📜 文匯(JSON)"];
-            
-            for (let name of order) {
-                if (!globalNewsData[name]) continue;
-                let src = globalNewsData[name];
-                html += `<div class="news-column"><div class="news-source-header" style="border-left: 5px solid ${src.color};"><div>${name}</div><span style="font-size:0.8em; color:#64748b;">${src.items.length} 則</span></div>`;
-                for (let item of src.items) {
-                    let isSel = selectedLinks.includes(item.link), badge = (new Date().getTime()/1000 - item.timestamp <= 1800) ? '<span class="new-badge">NEW!</span>' : '';
-                    let timeStr = new Date(item.timestamp*1000).toLocaleTimeString('zh-HK', {hour:'2-digit', minute:'2-digit', hour12:false});
-                    html += `<div class="news-item-row"><input type="checkbox" onchange="toggleSelect('${item.link}')" ${isSel?'checked':''}>
-                             <div class="news-content">${badge}<a href="${item.link}" target="_blank" class="${isSel?'read-text':''}">${item.title}</a><div class="news-time">${timeStr}</div></div></div>`;
-                }
-                html += `</div>`;
+        // 嘗試從 Header 抓取原本的檔名，如果沒有就用預設的
+        let filename = 'extracted_audio.mp3';
+        const disposition = response.headers.get('Content-Disposition');
+        if (disposition && disposition.indexOf('filename=') !== -1) {
+            const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+            const matches = filenameRegex.exec(disposition);
+            if (matches != null && matches[1]) { 
+                filename = matches[1].replace(/['"]/g, '');
             }
-            db.innerHTML = html;
         }
 
-        async function fetchNews() {
-            try {
-                const res = await fetch('/api/news'); globalNewsData = await res.json(); renderDashboard();
-            } catch (e) {}
-        }
-        fetchNews(); setInterval(fetchNews, 15000);
-    </script>
-</body>
-</html>
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        
+        // 清理記憶體
+        window.URL.revokeObjectURL(downloadUrl);
+        document.body.removeChild(a);
+
+        // 4. 成功提示
+        statusDiv.innerHTML = '<span style="color: #10b981;">✅ 提取成功！檔案已開始下載。</span>';
+        document.getElementById('extract-url').value = ''; // 清空輸入框
+
+    } catch (error) {
+        statusDiv.innerHTML = `<span style="color: #ef4444;">❌ 發生錯誤：${error.message}</span>`;
+    } finally {
+        // 5. 恢復按鈕狀態
+        btn.disabled = false;
+        btn.style.background = '#0284c7';
+        btn.innerText = '📥 提取並下載';
+    }
+});
+</script>
